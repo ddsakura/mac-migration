@@ -86,6 +86,9 @@ copy_if_exists "$HOME/.wgetrc"          "$DOTFILES_DIR/.wgetrc"
 copy_if_exists "$HOME/.npmrc"           "$DOTFILES_DIR/.npmrc"
 copy_if_exists "$HOME/.config/gh"       "$DOTFILES_DIR/gh"
 
+# Mackup
+copy_if_exists "$HOME/.mackup.cfg"      "$MIGRATION_DIR/mackup.cfg"
+
 # ════════════════════════════════════════════
 # 3. SSH config（不含 private key）
 # ════════════════════════════════════════════
@@ -185,8 +188,9 @@ echo ""
 echo "  匯出路徑: $MIGRATION_DIR"
 echo ""
 echo "  下一步："
-echo "  1. 執行 'mackup backup' 備份 app 設定"
-echo "  2. 等待 iCloud 同步完成"
+echo "  1. 執行 mackup backup 備份 app 設定："
+echo "     mackup --config-file $MIGRATION_DIR/mackup.cfg backup"
+echo "  2. 等待 storage 同步完成（iCloud / Dropbox / 自訂路徑）"
 echo "  3. 將 $MIGRATION_DIR 傳到新機器"
 echo "     （AirDrop / iCloud Drive / 外接碟）"
 echo ""

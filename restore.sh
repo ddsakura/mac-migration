@@ -108,6 +108,14 @@ else
   fi
 fi
 
+# ── VS Code 檢查（Brewfile 內有 vscode extensions，需要先裝）──
+if grep -q '^vscode ' "$MIGRATION_DIR/Brewfile" 2>/dev/null; then
+  if ! command -v code &>/dev/null; then
+    warn "Brewfile 含有 VS Code extensions，但偵測不到 'code' 指令"
+    info "請先安裝 VS Code 再重新執行，或手動安裝 extensions"
+  fi
+fi
+
 # ── 用 Brewfile 安裝套件 ──────────────────────────────────
 if [ -f "$MIGRATION_DIR/Brewfile" ]; then
   info "找到 Brewfile（$(grep -c '' "$MIGRATION_DIR/Brewfile") 行），準備安裝..."
@@ -197,19 +205,25 @@ fi
 # ════════════════════════════════════════════
 step "5. mackup restore（App 設定）"
 
-if command -v mackup &>/dev/null; then
-  warn "此步驟需要 iCloud 已完全同步完成"
-  if confirm "確認 iCloud 已同步，執行 mackup restore？"; then
-    mackup restore
+MACKUP_CFG="$MIGRATION_DIR/mackup.cfg"
+
+if [ ! -f "$MACKUP_CFG" ]; then
+  warn "找不到 $MACKUP_CFG，跳過 mackup restore"
+  info "若需要，請手動建立設定後執行："
+  echo "  mackup --config-file <path/to/mackup.cfg> restore"
+else
+  if ! command -v mackup &>/dev/null; then
+    info "安裝 mackup..."
+    brew install mackup
+  fi
+  warn "此步驟需要 mackup 的 storage 已同步完成（iCloud / Dropbox / Google Drive / 自訂路徑）"
+  if confirm "確認 storage 已同步，執行 mackup restore？"; then
+    mackup --config-file "$MACKUP_CFG" restore
     success "mackup restore 完成"
   else
-    skip "略過 mackup restore（可之後手動執行：mackup restore）"
+    skip "略過 mackup restore（可之後手動執行）："
+    echo "  mackup --config-file $MACKUP_CFG restore"
   fi
-else
-  info "安裝 mackup..."
-  brew install mackup
-  warn "請確認 iCloud 已同步，之後手動執行："
-  echo "  mackup restore"
 fi
 
 # ════════════════════════════════════════════
