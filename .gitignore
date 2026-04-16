@@ -1,0 +1,5 @@
+# 匯出的 migration 資料夾（含敏感資訊，不應進版控）
+mac-migration/
+
+# macOS
+.DS_Store
