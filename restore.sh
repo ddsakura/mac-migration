@@ -159,8 +159,8 @@ else
     else
       echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "$HOME/.zprofile"
       eval "$(/opt/homebrew/bin/brew shellenv)"
+      success "Apple Silicon: 已設定 Homebrew PATH"
     fi
-    success "Apple Silicon: 已設定 Homebrew PATH"
   fi
 fi
 
