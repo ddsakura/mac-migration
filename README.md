@@ -38,6 +38,12 @@ bash restore.sh
 bash restore.sh --migration-dir /path/to/mac-migration
 ```
 
+先檢查會做哪些事、但不實際安裝或覆蓋檔案：
+
+```bash
+bash restore.sh --dry-run --migration-dir /path/to/mac-migration
+```
+
 ## 備份內容
 
 | 項目 | 說明 |
@@ -63,7 +69,9 @@ bash restore.sh --migration-dir /path/to/mac-migration
 
 ## 注意事項
 
-- **SSH private keys**：export.sh 會詢問是否備份，備份後請妥善保管，不建議放 iCloud
+- **SSH private keys**：`backup.sh` 會詢問是否備份，備份後請妥善保管，不建議放 iCloud
+- **Dry-run**：`restore.sh --dry-run` 只會列出將執行的動作，不會安裝套件、複製檔案、寫入 defaults、產生 SSH key 或重啟 Dock/Finder
 - **macOS defaults**：套用前需要 Terminal 有完整磁碟存取權限（系統設定 → 隱私權與安全性）
 - **mackup**：執行 restore 前需確認 storage 已同步。storage 設定備份於 `mac-migration/mackup.cfg`，restore.sh 會自動以 `--config-file` 傳入，支援 iCloud、Dropbox、Google Drive、或自訂路徑（`file_system`）
+- **VS Code `code` 指令**：安裝後需手動註冊 shell command 才能在終端機使用 `code`。開啟 Command Palette → 執行「Shell Command: Install 'code' command in PATH」。詳見 [官方說明](https://code.visualstudio.com/docs/setup/mac#_launch-vs-code-from-the-command-line)
 - `mac-migration/` 資料夾包含敏感資訊，不應上傳到任何雲端或公開服務

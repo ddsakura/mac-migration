@@ -1,16 +1,31 @@
 #!/bin/bash
 # ============================================================
 # restore.sh — 新機器還原 script
-# 用法: bash restore.sh [--migration-dir /path/to/mac-migration]
+# 用法: bash restore.sh [--dry-run] [--migration-dir /path/to/mac-migration]
 # ============================================================
 
 set -e
 
 # ── 參數處理 ───────────────────────────────────────────────
 MIGRATION_DIR="$(pwd)/mac-migration"
+DRY_RUN=false
 while [[ "$#" -gt 0 ]]; do
   case $1 in
-    --migration-dir) MIGRATION_DIR="$2"; shift ;;
+    --dry-run) DRY_RUN=true ;;
+    --migration-dir)
+      if [ -z "${2:-}" ] || [[ "$2" == --* ]]; then
+        echo "--migration-dir 需要指定資料夾路徑"
+        echo "用法: bash restore.sh [--dry-run] [--migration-dir /path/to/mac-migration]"
+        exit 1
+      fi
+      MIGRATION_DIR="$2"
+      shift
+      ;;
+    *)
+      echo "未知參數: $1"
+      echo "用法: bash restore.sh [--dry-run] [--migration-dir /path/to/mac-migration]"
+      exit 1
+      ;;
   esac
   shift
 done
@@ -31,6 +46,17 @@ success() { echo -e "${GREEN}[OK]${NC}    $1"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $1"; }
 error()   { echo -e "${RED}[ERR]${NC}   $1"; }
 skip()    { echo -e "${YELLOW}[SKIP]${NC}  $1"; }
+dryrun()  { echo -e "${YELLOW}[DRY]${NC}   $1"; }
+
+run_or_dry() {
+  local desc="$1"
+  shift
+  if [ "$DRY_RUN" = true ]; then
+    dryrun "$desc"
+  else
+    "$@"
+  fi
+}
 
 step() {
   echo ""
@@ -38,6 +64,12 @@ step() {
 }
 
 confirm() {
+  if [ "$DRY_RUN" = true ]; then
+    # Dry-run previews the full "yes" path so users can see every possible
+    # action this restore would perform. It does not model the "no" branches.
+    dryrun "會詢問: $1"
+    return 0
+  fi
   read -p "  $1 [Y/n] " -n 1 -r
   echo ""
   [[ $REPLY =~ ^[Nn]$ ]] && return 1 || return 0
@@ -47,6 +79,14 @@ restore_dotfile() {
   local src="$DOTFILES_DIR/$1"
   local dest="$HOME/$1"
   if [ -f "$src" ]; then
+    if [ "$DRY_RUN" = true ]; then
+      if [ -e "$dest" ]; then
+        dryrun "會覆蓋: $dest <= $src"
+      else
+        dryrun "會還原: $dest <= $src"
+      fi
+      return
+    fi
     cp "$src" "$dest"
     success "還原: $1"
   else
@@ -68,11 +108,14 @@ if [ ! -d "$MIGRATION_DIR" ]; then
   echo "  $MIGRATION_DIR"
   echo ""
   echo "  或指定路徑執行："
-  echo "  bash setup.sh --migration-dir /path/to/mac-migration"
+  echo "  bash restore.sh --migration-dir /path/to/mac-migration"
   exit 1
 fi
 
 info "使用 migration 資料夾: $MIGRATION_DIR"
+if [ "$DRY_RUN" = true ]; then
+  warn "Dry-run 模式：只顯示將執行的動作，不會安裝、複製、寫入或重啟系統服務"
+fi
 
 # ════════════════════════════════════════════
 # 1. Xcode Command Line Tools
@@ -82,10 +125,14 @@ if xcode-select -p &>/dev/null; then
   success "已安裝: $(xcode-select -p)"
 else
   info "安裝 Xcode Command Line Tools..."
-  xcode-select --install
-  echo ""
-  warn "請在彈出視窗點擊「安裝」，完成後按 Enter 繼續"
-  read -r
+  run_or_dry "會執行: xcode-select --install" xcode-select --install
+  if [ "$DRY_RUN" = true ]; then
+    dryrun "會等待使用者完成安裝後按 Enter"
+  else
+    echo ""
+    warn "請在彈出視窗點擊「安裝」，完成後按 Enter 繼續"
+    read -r
+  fi
 fi
 
 # ════════════════════════════════════════════
@@ -95,16 +142,25 @@ step "2. Homebrew"
 if command -v brew &>/dev/null; then
   success "Homebrew 已安裝"
   info "更新 Homebrew..."
-  brew update
+  run_or_dry "會執行: brew update" brew update
 else
   info "安裝 Homebrew..."
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  if [ "$DRY_RUN" = true ]; then
+    dryrun "會下載並執行 Homebrew installer"
+  else
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  fi
 
   # Apple Silicon 設定 PATH
   if [ -f "/opt/homebrew/bin/brew" ]; then
-    echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "$HOME/.zprofile"
-    eval "$(/opt/homebrew/bin/brew shellenv)"
-    success "Apple Silicon: 已設定 Homebrew PATH"
+    if [ "$DRY_RUN" = true ]; then
+      dryrun "會加入 Homebrew shellenv 到 $HOME/.zprofile"
+      dryrun "會載入 Homebrew shellenv"
+    else
+      echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "$HOME/.zprofile"
+      eval "$(/opt/homebrew/bin/brew shellenv)"
+      success "Apple Silicon: 已設定 Homebrew PATH"
+    fi
   fi
 fi
 
@@ -120,9 +176,13 @@ fi
 if [ -f "$MIGRATION_DIR/Brewfile" ]; then
   info "找到 Brewfile（$(grep -c '' "$MIGRATION_DIR/Brewfile") 行），準備安裝..."
   if confirm "開始安裝 Brewfile 套件？（可能需要較長時間）"; then
-    brew bundle install --file="$MIGRATION_DIR/Brewfile" --no-lock || \
-      warn "部分套件安裝失敗（通常是版本或授權問題，可手動補裝）"
-    success "Brewfile 安裝完成"
+    if [ "$DRY_RUN" = true ]; then
+      dryrun "會執行: brew bundle install --file=\"$MIGRATION_DIR/Brewfile\" --no-lock"
+    else
+      brew bundle install --file="$MIGRATION_DIR/Brewfile" --no-lock || \
+        warn "部分套件安裝失敗（通常是版本或授權問題，可手動補裝）"
+      success "Brewfile 安裝完成"
+    fi
   fi
 else
   warn "找不到 Brewfile，跳過"
@@ -148,14 +208,27 @@ if [ -d "$DOTFILES_DIR" ]; then
 
   # GitHub CLI config
   if [ -d "$DOTFILES_DIR/gh" ]; then
-    mkdir -p "$HOME/.config"
-    cp -r "$DOTFILES_DIR/gh" "$HOME/.config/gh"
-    success "還原: GitHub CLI 設定"
+    if [ "$DRY_RUN" = true ]; then
+      dryrun "會建立: $HOME/.config"
+      if [ -e "$HOME/.config/gh" ]; then
+        dryrun "會覆蓋: $HOME/.config/gh <= $DOTFILES_DIR/gh"
+      else
+        dryrun "會還原: $HOME/.config/gh <= $DOTFILES_DIR/gh"
+      fi
+    else
+      mkdir -p "$HOME/.config"
+      cp -r "$DOTFILES_DIR/gh" "$HOME/.config/gh"
+      success "還原: GitHub CLI 設定"
+    fi
   fi
 
   # 套用 .zshrc
   if [ -f "$HOME/.zshrc" ]; then
-    source "$HOME/.zshrc" 2>/dev/null || true
+    if [ "$DRY_RUN" = true ]; then
+      dryrun "會載入: $HOME/.zshrc"
+    else
+      source "$HOME/.zshrc" 2>/dev/null || true
+    fi
   fi
 else
   warn "找不到 dotfiles 備份，跳過"
@@ -165,38 +238,57 @@ fi
 # 4. SSH 設定
 # ════════════════════════════════════════════
 step "4. SSH 設定"
-mkdir -p "$HOME/.ssh"
-chmod 700 "$HOME/.ssh"
+run_or_dry "會建立: $HOME/.ssh" mkdir -p "$HOME/.ssh"
+run_or_dry "會設定權限: chmod 700 $HOME/.ssh" chmod 700 "$HOME/.ssh"
 
 # config 檔
 if [ -f "$SSH_DIR/config" ]; then
-  cp "$SSH_DIR/config" "$HOME/.ssh/config"
-  chmod 644 "$HOME/.ssh/config"
-  success "還原: SSH config"
+  if [ "$DRY_RUN" = true ]; then
+    if [ -e "$HOME/.ssh/config" ]; then
+      dryrun "會覆蓋: $HOME/.ssh/config <= $SSH_DIR/config"
+    else
+      dryrun "會還原: $HOME/.ssh/config <= $SSH_DIR/config"
+    fi
+    dryrun "會設定權限: chmod 644 $HOME/.ssh/config"
+  else
+    cp "$SSH_DIR/config" "$HOME/.ssh/config"
+    chmod 644 "$HOME/.ssh/config"
+    success "還原: SSH config"
+  fi
 fi
 
 # Private keys（如果有備份）
 KEY_COUNT=$(find "$SSH_DIR" -name "id_*" ! -name "*.pub" 2>/dev/null | wc -l | tr -d ' ')
 if [ "$KEY_COUNT" -gt 0 ]; then
   if confirm "找到 $KEY_COUNT 個 SSH private key，是否還原？"; then
-    cp "$SSH_DIR"/id_* "$HOME/.ssh/" 2>/dev/null
-    chmod 600 "$HOME/.ssh"/id_* 2>/dev/null || true
-    success "SSH keys 已還原"
+    if [ "$DRY_RUN" = true ]; then
+      dryrun "會複製 SSH private keys: $SSH_DIR/id_* -> $HOME/.ssh/"
+      dryrun "會設定權限: chmod 600 $HOME/.ssh/id_*"
+    else
+      cp "$SSH_DIR"/id_* "$HOME/.ssh/" 2>/dev/null
+      chmod 600 "$HOME/.ssh"/id_* 2>/dev/null || true
+      success "SSH keys 已還原"
+    fi
   fi
 else
   warn "未找到 SSH private key 備份"
   echo ""
   if confirm "  要現在產生新的 SSH key 嗎？"; then
-    read -p "  輸入 email: " SSH_EMAIL
-    ssh-keygen -t ed25519 -C "$SSH_EMAIL" -f "$HOME/.ssh/id_ed25519"
-    success "新的 SSH key 已產生"
-    echo ""
-    info "公鑰內容（複製到 GitHub / GitLab）："
-    echo ""
-    cat "$HOME/.ssh/id_ed25519.pub"
-    echo ""
-    warn "請先把公鑰加到各服務後，再按 Enter 繼續"
-    read -r
+    if [ "$DRY_RUN" = true ]; then
+      dryrun "會詢問 email 並執行: ssh-keygen -t ed25519 -C <email> -f \"$HOME/.ssh/id_ed25519\""
+      dryrun "會顯示新公鑰並等待使用者加入 GitHub / GitLab"
+    else
+      read -p "  輸入 email: " SSH_EMAIL
+      ssh-keygen -t ed25519 -C "$SSH_EMAIL" -f "$HOME/.ssh/id_ed25519"
+      success "新的 SSH key 已產生"
+      echo ""
+      info "公鑰內容（複製到 GitHub / GitLab）："
+      echo ""
+      cat "$HOME/.ssh/id_ed25519.pub"
+      echo ""
+      warn "請先把公鑰加到各服務後，再按 Enter 繼續"
+      read -r
+    fi
   fi
 fi
 
@@ -208,18 +300,19 @@ step "5. mackup restore（App 設定）"
 MACKUP_CFG="$MIGRATION_DIR/mackup.cfg"
 
 if [ ! -f "$MACKUP_CFG" ]; then
-  warn "找不到 $MACKUP_CFG，跳過 mackup restore"
+  warn "找不到 mackup 設定，跳過 mackup restore"
+  echo "  $MACKUP_CFG"
   info "若需要，請手動建立設定後執行："
   echo "  mackup --config-file <path/to/mackup.cfg> restore"
 else
   if ! command -v mackup &>/dev/null; then
     info "安裝 mackup..."
-    brew install mackup
+    run_or_dry "會執行: brew install mackup" brew install mackup
   fi
   warn "此步驟需要 mackup 的 storage 已同步完成（iCloud / Dropbox / Google Drive / 自訂路徑）"
   if confirm "確認 storage 已同步，執行 mackup restore？"; then
-    mackup --config-file "$MACKUP_CFG" restore
-    success "mackup restore 完成"
+    run_or_dry "會執行: mackup --config-file \"$MACKUP_CFG\" restore" mackup --config-file "$MACKUP_CFG" restore
+    [ "$DRY_RUN" = true ] || success "mackup restore 完成"
   else
     skip "略過 mackup restore（可之後手動執行）："
     echo "  mackup --config-file $MACKUP_CFG restore"
@@ -237,46 +330,52 @@ echo ""
 if confirm "套用 macOS defaults？"; then
 
   # ── Dock ──
-  defaults write com.apple.dock "autohide"        -bool "true"
-  defaults write com.apple.dock "show-recents"    -bool "false"
-  defaults write com.apple.dock "tilesize"        -int  "48"
-  defaults write com.apple.dock "mineffect"       -string "scale"
-  killall Dock
-  success "Dock 設定已套用"
+  if [ "$DRY_RUN" = true ]; then
+    dryrun "會套用 Dock defaults 並重啟 Dock"
+    dryrun "會套用 Finder defaults 並重啟 Finder"
+    dryrun "會套用截圖、鍵盤、觸控板、TextEdit 與文件儲存偏好"
+  else
+    defaults write com.apple.dock "autohide"        -bool "true"
+    defaults write com.apple.dock "show-recents"    -bool "false"
+    defaults write com.apple.dock "tilesize"        -int  "48"
+    defaults write com.apple.dock "mineffect"       -string "scale"
+    killall Dock
+    success "Dock 設定已套用"
 
-  # ── Finder ──
-  defaults write com.apple.finder "ShowPathbar"       -bool "true"
-  defaults write com.apple.finder "ShowStatusBar"     -bool "true"
-  defaults write com.apple.finder "FXPreferredViewStyle" -string "Nlsv"  # list view
-  defaults write com.apple.finder "AppleShowAllFiles" -bool "true"
-  defaults write com.apple.finder "_FXShowPosixPathInTitle" -bool "true"
-  defaults write com.apple.finder "FXDefaultSearchScope" -string "SCcf"  # 搜尋目前資料夾
-  killall Finder
-  success "Finder 設定已套用"
+    # ── Finder ──
+    defaults write com.apple.finder "ShowPathbar"       -bool "true"
+    defaults write com.apple.finder "ShowStatusBar"     -bool "true"
+    defaults write com.apple.finder "FXPreferredViewStyle" -string "Nlsv"  # list view
+    defaults write com.apple.finder "AppleShowAllFiles" -bool "true"
+    defaults write com.apple.finder "_FXShowPosixPathInTitle" -bool "true"
+    defaults write com.apple.finder "FXDefaultSearchScope" -string "SCcf"  # 搜尋目前資料夾
+    killall Finder
+    success "Finder 設定已套用"
 
-  # ── 截圖 ──
-  defaults write com.apple.screencapture "location"        -string "$HOME/Desktop"
-  defaults write com.apple.screencapture "type"            -string "png"
-  defaults write com.apple.screencapture "disable-shadow"  -bool "true"
-  success "截圖設定已套用"
+    # ── 截圖 ──
+    defaults write com.apple.screencapture "location"        -string "$HOME/Desktop"
+    defaults write com.apple.screencapture "type"            -string "png"
+    defaults write com.apple.screencapture "disable-shadow"  -bool "true"
+    success "截圖設定已套用"
 
-  # ── 鍵盤 ──
-  defaults write NSGlobalDomain "KeyRepeat"           -int "2"
-  defaults write NSGlobalDomain "InitialKeyRepeat"    -int "15"
-  defaults write NSGlobalDomain "ApplePressAndHoldEnabled" -bool "false"
-  success "鍵盤設定已套用"
+    # ── 鍵盤 ──
+    defaults write NSGlobalDomain "KeyRepeat"           -int "2"
+    defaults write NSGlobalDomain "InitialKeyRepeat"    -int "15"
+    defaults write NSGlobalDomain "ApplePressAndHoldEnabled" -bool "false"
+    success "鍵盤設定已套用"
 
-  # ── 觸控板 ──
-  defaults write com.apple.AppleMultitouchTrackpad "Clicking" -bool "true"
-  defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad "Clicking" -bool "true"
-  success "觸控板設定已套用（Tap to Click）"
+    # ── 觸控板 ──
+    defaults write com.apple.AppleMultitouchTrackpad "Clicking" -bool "true"
+    defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad "Clicking" -bool "true"
+    success "觸控板設定已套用（Tap to Click）"
 
-  # ── 其他 ──
-  defaults write NSGlobalDomain "NSDocumentSaveNewDocumentsToCloud" -bool "false"  # 預設存本機
-  defaults write com.apple.TextEdit "RichText" -bool "false"  # TextEdit 預設純文字
-  success "其他設定已套用"
+    # ── 其他 ──
+    defaults write NSGlobalDomain "NSDocumentSaveNewDocumentsToCloud" -bool "false"  # 預設存本機
+    defaults write com.apple.TextEdit "RichText" -bool "false"  # TextEdit 預設純文字
+    success "其他設定已套用"
 
-  warn "部分設定需要登出或重新開機才會生效"
+    warn "部分設定需要登出或重新開機才會生效"
+  fi
 fi
 
 # ════════════════════════════════════════════
@@ -287,10 +386,15 @@ step "7. 開發工具"
 # nvm
 if [ ! -d "$HOME/.nvm" ]; then
   if confirm "安裝 nvm？"; then
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/HEAD/install.sh | bash
-    export NVM_DIR="$HOME/.nvm"
-    [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
-    success "nvm 已安裝"
+    if [ "$DRY_RUN" = true ]; then
+      dryrun "會下載並執行 nvm installer"
+      dryrun "會載入 $HOME/.nvm/nvm.sh"
+    else
+      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/HEAD/install.sh | bash
+      export NVM_DIR="$HOME/.nvm"
+      [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+      success "nvm 已安裝"
+    fi
 
     # 從 versions.txt 提示安裝的 Node 版本
     if [ -f "$MIGRATION_DIR/versions.txt" ]; then
@@ -298,16 +402,25 @@ if [ ! -d "$HOME/.nvm" ]; then
       if [ -n "$NODE_VER" ]; then
         info "舊機器 Node 版本: v$NODE_VER"
         if confirm "安裝 Node v$NODE_VER？"; then
-          nvm install "$NODE_VER"
-          nvm use "$NODE_VER"
-          success "Node v$NODE_VER 已安裝"
+          if [ "$DRY_RUN" = true ]; then
+            dryrun "會執行: nvm install \"$NODE_VER\""
+            dryrun "會執行: nvm use \"$NODE_VER\""
+          else
+            nvm install "$NODE_VER"
+            nvm use "$NODE_VER"
+            success "Node v$NODE_VER 已安裝"
+          fi
         fi
       fi
     fi
 
     if confirm "安裝 Node LTS？"; then
-      nvm install --lts
-      success "Node LTS 已安裝"
+      if [ "$DRY_RUN" = true ]; then
+        dryrun "會執行: nvm install --lts"
+      else
+        nvm install --lts
+        success "Node LTS 已安裝"
+      fi
     fi
   fi
 else
@@ -322,7 +435,11 @@ echo "╔═══════════════════════�
 echo "║           安裝完成！                      ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
-echo "  ✅ 自動化部分已完成"
+if [ "$DRY_RUN" = true ]; then
+  echo "  ✅ Dry-run 檢查完成，未改動此機器"
+else
+  echo "  ✅ 自動化部分已完成"
+fi
 echo ""
 echo "  📋 以下需要手動處理："
 echo ""
