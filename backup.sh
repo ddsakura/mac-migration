@@ -6,6 +6,10 @@
 # ============================================================
 
 set -e
+# 備份階段的未處理錯誤統一回傳 1，保留 2 給「備份完成、加密失敗」。
+trap 'exit 1' ERR
+umask 077
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 MIGRATION_DIR="$(pwd)/mac-migration"
 DOTFILES_DIR="$MIGRATION_DIR/dotfiles"
@@ -221,3 +225,11 @@ echo "  2. 等待 storage 同步完成（iCloud / Dropbox / 自訂路徑）"
 echo "  3. 將 $MIGRATION_DIR 傳到新機器"
 echo "     （AirDrop / iCloud Drive / 外接碟）"
 echo ""
+
+read -r -p "是否將本次備份加密打包成 .dmg？[y/N] " ENCRYPT_BACKUP || ENCRYPT_BACKUP=""
+if [[ "$ENCRYPT_BACKUP" =~ ^[Yy]$ ]]; then
+  if ! bash "$SCRIPT_DIR/encrypt-backup.sh" "$MIGRATION_DIR"; then
+    warn "備份已完成，但加密未完成（狀態碼 2）；請妥善保管明文備份: $MIGRATION_DIR"
+    exit 2
+  fi
+fi

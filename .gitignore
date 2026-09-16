@@ -2,7 +2,10 @@
 mac-migration/
 mac-migration-*/
 mac-migration*.zip
+mac-migration*.dmg
+.mac-migration-encrypt.*/
 
 # macOS
 .DS_Store
 .ai-reviews/
+__pycache__/
