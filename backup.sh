@@ -49,7 +49,7 @@ copy_if_exists() {
   local dest="$2"
   if [ -f "$src" ] || [ -d "$src" ]; then
     # 取代前次備份，避免 cp 將目錄塞進既有的同名目錄。
-    rm -rf "$dest"
+    rm -rf -- "$dest"
     cp -r "$src" "$dest"
     success "已備份: $src"
   else
