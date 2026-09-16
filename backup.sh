@@ -24,10 +24,32 @@ success() { echo -e "${GREEN}[OK]${NC}    $1"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $1"; }
 skip()    { echo -e "${YELLOW}[SKIP]${NC}  $1"; }
 
+archive_previous_backup() {
+  local archive_base archive_dir suffix=1
+  if [ -L "$MIGRATION_DIR" ] || { [ -e "$MIGRATION_DIR" ] && [ ! -d "$MIGRATION_DIR" ]; }; then
+    warn "備份路徑不是一般資料夾，請先移開: $MIGRATION_DIR"
+    exit 1
+  fi
+  if [ -d "$MIGRATION_DIR" ]; then
+    archive_base="${MIGRATION_DIR}-$(date +%Y%m%d-%H%M%S)"
+    archive_dir="$archive_base"
+    # 同一秒重跑時加上序號，避免覆蓋或移入既有備份。
+    while [ -e "$archive_dir" ] || [ -L "$archive_dir" ]; do
+      archive_dir="${archive_base}-${suffix}"
+      suffix=$((suffix + 1))
+    done
+    mv "$MIGRATION_DIR" "$archive_dir"
+    PREVIOUS_BACKUP_DIR="$archive_dir"
+    success "已保留前次備份: $PREVIOUS_BACKUP_DIR"
+  fi
+}
+
 copy_if_exists() {
   local src="$1"
   local dest="$2"
   if [ -f "$src" ] || [ -d "$src" ]; then
+    # 取代前次備份，避免 cp 將目錄塞進既有的同名目錄。
+    rm -rf "$dest"
     cp -r "$src" "$dest"
     success "已備份: $src"
   else
@@ -42,6 +64,8 @@ echo "╚═══════════════════════�
 echo ""
 
 # ── 建立目錄結構 ───────────────────────────────────────────
+PREVIOUS_BACKUP_DIR=""
+archive_previous_backup
 info "建立 migration 目錄..."
 mkdir -p "$DOTFILES_DIR" "$DEFAULTS_DIR" "$SSH_DIR"
 
@@ -186,6 +210,9 @@ echo "║              匯出完成！                   ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
 echo "  匯出路徑: $MIGRATION_DIR"
+if [ -n "$PREVIOUS_BACKUP_DIR" ]; then
+  echo "  前次備份: $PREVIOUS_BACKUP_DIR（保留供自行清理）"
+fi
 echo ""
 echo "  下一步："
 echo "  1. 執行 mackup backup 備份 app 設定："
