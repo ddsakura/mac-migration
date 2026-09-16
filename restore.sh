@@ -58,6 +58,28 @@ run_or_dry() {
   fi
 }
 
+ensure_homebrew_shellenv() {
+  local shellenv_line='eval "$(/opt/homebrew/bin/brew shellenv)"'
+  if [ -f /opt/homebrew/bin/brew ]; then
+    if [ "$DRY_RUN" = true ]; then
+      # 追蹤預覽中的設定，避免因未實際寫檔而重複預告加入。
+      if [ "${DRY_SHELLENV_ADDED:-false}" != true ] &&
+          ! grep -Fqx "$shellenv_line" "${DRY_ZPROFILE:-$HOME/.zprofile}" 2>/dev/null; then
+        dryrun "會加入 Homebrew shellenv 到 $HOME/.zprofile"
+        dryrun "會載入 Homebrew shellenv"
+        DRY_SHELLENV_ADDED=true
+      fi
+    else
+      if ! grep -Fqx "$shellenv_line" "$HOME/.zprofile" 2>/dev/null; then
+        # 前置換行避免與沒有結尾換行的設定黏在一起。
+        printf '\n%s\n' "$shellenv_line" >> "$HOME/.zprofile"
+        success "Apple Silicon: 已設定 Homebrew PATH"
+      fi
+      eval "$(/opt/homebrew/bin/brew shellenv)"
+    fi
+  fi
+}
+
 step() {
   echo ""
   echo -e "${CYAN}── $1 ─────────────────────────────────────${NC}"
@@ -80,6 +102,10 @@ restore_dotfile() {
   local dest="$HOME/$1"
   if [ -f "$src" ]; then
     if [ "$DRY_RUN" = true ]; then
+      if [ "$1" = .zprofile ]; then
+        DRY_ZPROFILE="$src"
+        DRY_SHELLENV_ADDED=false
+      fi
       if [ -e "$dest" ]; then
         dryrun "會覆蓋: $dest <= $src"
       else
@@ -151,18 +177,8 @@ else
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   fi
 
-  # Apple Silicon 設定 PATH
-  if [ -f "/opt/homebrew/bin/brew" ]; then
-    if [ "$DRY_RUN" = true ]; then
-      dryrun "會加入 Homebrew shellenv 到 $HOME/.zprofile"
-      dryrun "會載入 Homebrew shellenv"
-    else
-      echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "$HOME/.zprofile"
-      eval "$(/opt/homebrew/bin/brew shellenv)"
-      success "Apple Silicon: 已設定 Homebrew PATH"
-    fi
-  fi
 fi
+ensure_homebrew_shellenv
 
 # ── VS Code 檢查（Brewfile 內有 vscode extensions，需要先裝）──
 if grep -q '^vscode ' "$MIGRATION_DIR/Brewfile" 2>/dev/null; then
@@ -233,6 +249,9 @@ if [ -d "$DOTFILES_DIR" ]; then
 else
   warn "找不到 dotfiles 備份，跳過"
 fi
+
+# 還原的 .zprofile 可能覆蓋步驟 2 的設定，需再確保一次。
+ensure_homebrew_shellenv
 
 # ════════════════════════════════════════════
 # 4. SSH 設定
