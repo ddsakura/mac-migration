@@ -222,19 +222,23 @@ if [ -d "$DOTFILES_DIR" ]; then
   restore_dotfile ".editorconfig"
   restore_dotfile ".npmrc"
 
-  # GitHub CLI config
-  if [ -d "$DOTFILES_DIR/gh" ]; then
+  # 新備份包含整個 .config；舊版僅有 gh 的備份仍可還原。
+  CONFIG_SOURCE=""
+  CONFIG_DEST="$HOME/.config"
+  if [ -d "$DOTFILES_DIR/.config" ]; then
+    CONFIG_SOURCE="$DOTFILES_DIR/.config"
+  elif [ -d "$DOTFILES_DIR/gh" ]; then
+    CONFIG_SOURCE="$DOTFILES_DIR/gh"
+    CONFIG_DEST="$HOME/.config/gh"
+  fi
+  if [ -n "$CONFIG_SOURCE" ]; then
     if [ "$DRY_RUN" = true ]; then
-      dryrun "會建立: $HOME/.config"
-      if [ -e "$HOME/.config/gh" ]; then
-        dryrun "會覆蓋: $HOME/.config/gh <= $DOTFILES_DIR/gh"
-      else
-        dryrun "會還原: $HOME/.config/gh <= $DOTFILES_DIR/gh"
-      fi
+      dryrun "會建立: $CONFIG_DEST"
+      dryrun "會合併還原（覆蓋同名檔案、保留其他檔案）: $CONFIG_DEST <= $CONFIG_SOURCE"
     else
-      mkdir -p "$HOME/.config"
-      cp -r "$DOTFILES_DIR/gh" "$HOME/.config/gh"
-      success "還原: GitHub CLI 設定"
+      mkdir -p "$CONFIG_DEST"
+      cp -R "$CONFIG_SOURCE/." "$CONFIG_DEST/"
+      success "還原: ${CONFIG_DEST}（合併並覆蓋同名檔案）"
     fi
   fi
 

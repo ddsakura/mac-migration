@@ -112,7 +112,15 @@ copy_if_exists "$HOME/.editorconfig"    "$DOTFILES_DIR/.editorconfig"
 copy_if_exists "$HOME/.curlrc"          "$DOTFILES_DIR/.curlrc"
 copy_if_exists "$HOME/.wgetrc"          "$DOTFILES_DIR/.wgetrc"
 copy_if_exists "$HOME/.npmrc"           "$DOTFILES_DIR/.npmrc"
-copy_if_exists "$HOME/.config/gh"       "$DOTFILES_DIR/gh"
+
+# 整個 .config（含隱藏檔）；/. 也可讀取以 symlink 指向的根目錄。
+if [ -d "$HOME/.config" ]; then
+  mkdir -p "$DOTFILES_DIR/.config"
+  cp -R "$HOME/.config/." "$DOTFILES_DIR/.config/"
+  success "已備份: $HOME/.config"
+else
+  skip "不存在: $HOME/.config"
+fi
 
 # Mackup
 copy_if_exists "$HOME/.mackup.cfg"      "$MIGRATION_DIR/mackup.cfg"

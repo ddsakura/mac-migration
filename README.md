@@ -101,6 +101,7 @@ bash restore.sh --dry-run --migration-dir /path/to/mac-migration
 |---|---|
 | `Brewfile` | 所有 Homebrew packages / casks / taps |
 | `dotfiles/` | `.zshrc` / `.gitconfig` / `.npmrc` 等 shell & 工具設定 |
+| `dotfiles/.config/` | 整個 `~/.config/`，含 Starship、GitHub CLI、其他工具的設定與隱藏檔 |
 | `mackup.cfg` | mackup storage 設定（供 `--config-file` 使用） |
 | `ssh/config` | SSH host 設定（private key 選擇性備份） |
 | `defaults/` | macOS 系統偏好設定（純文字，供參考） |
@@ -113,6 +114,7 @@ bash restore.sh --dry-run --migration-dir /path/to/mac-migration
 | Xcode Command Line Tools | 自動安裝 |
 | Homebrew | 自動安裝，並從 Brewfile 還原所有套件 |
 | dotfiles | 自動複製回 `~/` |
+| `.config` | 合併還原至 `~/.config/`；覆蓋同名檔案，保留新機器其他檔案，亦相容舊版僅備份 gh 的格式 |
 | SSH config & keys | 自動還原，或產生新的 ed25519 key |
 | macOS defaults | 套用 Dock / Finder / 鍵盤 / 觸控板等偏好設定 |
 | nvm / Node | 安裝 nvm，提示安裝舊機器相同版本 |
@@ -120,6 +122,7 @@ bash restore.sh --dry-run --migration-dir /path/to/mac-migration
 
 ## 注意事項
 
+- **`.config` 範圍**：整個 `~/.config/` 都會備份，沒有排除 Token、快取或其他資料，建議使用加密 DMG。內部符號連結保留為連結，不會額外收集外部目標；根目錄 `~/.config` 若是符號連結，則備份其目錄內容。自訂 `XDG_CONFIG_HOME`／`STARSHIP_CONFIG` 指向此目錄以外的設定不會自動收集。
 - **SSH private keys**：`backup.sh` 會詢問是否備份，備份後請妥善保管，不建議放 iCloud
 - **Dry-run**：`restore.sh --dry-run` 只會列出將執行的動作，不會安裝套件、複製檔案、寫入 defaults、產生 SSH key 或重啟 Dock/Finder
 - **macOS defaults**：套用前需要 Terminal 有完整磁碟存取權限（系統設定 → 隱私權與安全性）
