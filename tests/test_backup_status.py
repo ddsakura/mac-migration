@@ -16,6 +16,12 @@ class BackupStatusTests(unittest.TestCase):
             home = root / 'home'
             home.mkdir()
             (home / '.zshrc').write_text('# fixture\n')
+            config = home / '.config'
+            (config / 'gh').mkdir(parents=True)
+            (config / 'starship.toml').write_text('add_newline = false\n')
+            (config / '.hidden').write_text('hidden fixture\n')
+            (config / 'gh/config.yml').write_text('git_protocol: ssh\n')
+            (config / 'linked.toml').symlink_to('starship.toml')
             scripts = root / 'scripts'
             scripts.mkdir()
             shutil.copy2(BACKUP, scripts / 'backup.sh')
@@ -37,6 +43,11 @@ class BackupStatusTests(unittest.TestCase):
             if brew_status == 0:
                 self.assertEqual((root / 'mac-migration/dotfiles/.zshrc').read_text(), '# fixture\n')
                 self.assertTrue((root / 'mac-migration/versions.txt').exists())
+                saved = root / 'mac-migration/dotfiles/.config'
+                for item in ('starship.toml', '.hidden', 'gh/config.yml'):
+                    self.assertEqual((saved / item).read_text(), (config / item).read_text())
+                self.assertTrue((saved / 'linked.toml').is_symlink())
+                self.assertFalse((root / 'mac-migration/dotfiles/gh').exists())
             return result
 
     def test_encryption_failure_is_distinct(self):
