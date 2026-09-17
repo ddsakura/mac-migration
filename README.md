@@ -110,7 +110,16 @@ bash restore.sh --dry-run --migration-dir /path/to/mac-migration
 | `ssh/` | 預設 config / known_hosts；選擇完整備份時包含整個 `~/.ssh/` |
 | `defaults/` | 可匯入的 macOS／App 偏好 plist |
 | `versions.txt` | 各開發工具版本號紀錄 |
+| `installed-apps.txt` | `/Applications` 與 `~/Applications` 的 App 名稱、版本、路徑，供新機重新安裝參考 |
 | `backup-format` / `manifest.json` | v1 格式標記、完整相對路徑清單與 SHA-256／符號連結校驗資訊 |
+
+`installed-apps.txt` 也涵蓋上述位置中手動下載安裝的 `.app`，包含 Utilities 等子資料夾，
+但不列出 App bundle 內附的 helper apps、不追蹤一般資料夾符號連結，也不掃描 `/System/Applications` 或其他位置。
+讀不到版本時記為 `unknown`；特殊字元使用 Bash `%q` 跳脫，避免檔名換行破壞清單。
+這不是純文字 TSV：試算表匯入時仍會看到跳脫字元，例如空白前的反斜線。
+掃描或暫存建立失敗時會提示，清單會標記不完整，保留已取得項目；其餘備份與校驗仍會繼續。
+清單會一起納入 SHA-256 校驗與選用的加密 DMG。新機可開啟清單逐項核對，
+從 App Store 或原廠重新安裝；清單不包含 App 本體、授權或安裝來源，也不會自動安裝。
 
 ## 還原內容
 

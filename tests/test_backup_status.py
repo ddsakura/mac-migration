@@ -10,11 +10,12 @@ BACKUP = Path(__file__).resolve().parents[1] / 'backup.sh'
 
 
 class BackupStatusTests(unittest.TestCase):
-    def run_backup(self, encryption_status=0, brew_status=0, encrypt=True):
+    def run_backup(self, encryption_status=0, brew_status=0, encrypt=True, inventory_failure=None):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             home = root / 'home'
             home.mkdir()
+            (home / 'Applications').mkdir()
             (home / '.zshrc').write_text('# fixture\n')
             config = home / '.config'
             (config / 'gh').mkdir(parents=True)
@@ -31,9 +32,13 @@ class BackupStatusTests(unittest.TestCase):
             binaries = root / 'bin'
             binaries.mkdir()
             for tool in ('brew', 'defaults', 'sw_vers', 'xcodebuild', 'node', 'npm',
-                         'ruby', 'python3', 'java', 'go', 'rustc', 'swift'):
+                         'ruby', 'python3', 'java', 'go', 'rustc', 'swift', 'find'):
                 stub = binaries / tool
                 stub.write_text(f'#!/bin/sh\nexit {brew_status if tool == "brew" else 0}\n')
+                stub.chmod(0o700)
+            if inventory_failure:
+                stub = binaries / inventory_failure
+                stub.write_text('#!/bin/sh\nexit 1\n')
                 stub.chmod(0o700)
             result = subprocess.run(
                 ['/bin/bash', str(scripts / 'backup.sh')], cwd=root,
@@ -46,6 +51,11 @@ class BackupStatusTests(unittest.TestCase):
             if brew_status == 0:
                 self.assertEqual((root / 'mac-migration/dotfiles/.zshrc').read_text(), '# fixture\n')
                 self.assertTrue((root / 'mac-migration/versions.txt').exists())
+                inventory = (root / 'mac-migration/installed-apps.txt').read_text()
+                self.assertIn('Name\tVersion\tPath', inventory)
+                if inventory_failure:
+                    self.assertIn('WARNING', inventory)
+                self.assertTrue((root / 'mac-migration/manifest.json').exists())
                 saved = root / 'mac-migration/dotfiles/.config'
                 for item in ('starship.toml', '.hidden', 'gh/config.yml'):
                     self.assertEqual((saved / item).read_text(), (config / item).read_text())
@@ -57,6 +67,14 @@ class BackupStatusTests(unittest.TestCase):
         result = self.run_backup(encryption_status=1)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn('備份已完成，但加密未完成', result.stdout)
+
+    def test_inventory_failure_does_not_abort_backup(self):
+        for tool in ('find', 'mktemp'):
+            with self.subTest(tool=tool):
+                result = self.run_backup(encrypt=False, inventory_failure=tool)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('App 清單匯出不完整或失敗', result.stdout)
+                self.assertIn('校驗通過', result.stdout)
 
     def test_backup_failure_is_normalized(self):
         result = self.run_backup(brew_status=2)
