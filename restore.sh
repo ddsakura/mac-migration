@@ -281,6 +281,8 @@ fi
 # 還原的 .zprofile 可能覆蓋步驟 2 的設定，需再確保一次。
 ensure_homebrew_shellenv
 
+restore_extra_settings "$MIGRATION_DIR"
+
 # Editors keep their existing per-directory snapshot protection, outside the AI batch.
 if [ "$RESTORE_DEVELOPER" = true ]; then
   for index in "${!DEVELOPER_IDS[@]}"; do

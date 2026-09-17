@@ -89,7 +89,7 @@ sub read_all {
 sub structure {
     my ($root, @ids) = @_;
     fail('backup root must be a real directory') if -l $root || !-d $root;
-    for my $name (qw(developer dotfiles ssh defaults extensions)) {
+    for my $name (qw(developer dotfiles ssh defaults extensions extra-settings)) {
         fail("backup structural path must be a directory: $name")
             if present("$root/$name") && (-l "$root/$name" || !-d "$root/$name");
     }

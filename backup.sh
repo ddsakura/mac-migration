@@ -72,7 +72,7 @@ echo ""
 select_ai_data backup "$MIGRATION_DIR"
 select_ai_preferences backup "$MIGRATION_DIR"
 check_ai_processes "${AI_SELECTED_IDS[@]}" "${AI_PREFERENCE_IDS[@]}"
-PREFLIGHT_SOURCES=("${DEVELOPER_PATHS[@]}" "$HOME/.config" "$HOME/.ssh" "$HOME/.mackup.cfg")
+PREFLIGHT_SOURCES=("${DEVELOPER_PATHS[@]}" "${EXTRA_PATHS[@]}" "$HOME/.config" "$HOME/.ssh" "$HOME/.mackup.cfg")
 for name in .zshrc .zprofile .zshenv .bashrc .bash_profile .aliases .gitconfig .gitignore_global .gitignore .vimrc .editorconfig .curlrc .wgetrc .npmrc; do
   PREFLIGHT_SOURCES+=("$HOME/$name")
 done
@@ -165,6 +165,13 @@ for editor in "${EDITOR_COMMANDS[@]}"; do
   fi
 done
 
+info "備份額外 Shell、雲端工具、GPG、Docker 設定與自訂腳本（可能含憑證／私鑰）..."
+EXTRA_SETTINGS_FAILED=false
+if ! backup_extra_settings "$MIGRATION_DIR"; then
+  EXTRA_SETTINGS_FAILED=true
+  warn "額外設定備份不完整或失敗；其餘備份與校驗會繼續。"
+fi
+
 # 完整 SSH 為 opt-in，避免將不明名稱的私鑰在使用者拒絕時一併帶走。
 echo ""
 echo "── 3. SSH ──────────────────────────────────"
@@ -253,6 +260,12 @@ fi
 check_ai_processes "${AI_SELECTED_IDS[@]}" "${AI_PREFERENCE_IDS[@]}"
 integrity create "$MIGRATION_DIR"
 integrity verify "$MIGRATION_DIR"
+
+if [ "$EXTRA_SETTINGS_FAILED" = true ]; then
+  warn "備份不完整（狀態碼 1）：請修正額外設定的複製錯誤後重新備份，勿清除原機。"
+  warn "本次已保存的資料位於 ${MIGRATION_DIR}；失敗項目記錄於 extra-settings-failed.txt。"
+  exit 1
+fi
 
 # ════════════════════════════════════════════
 # 完成

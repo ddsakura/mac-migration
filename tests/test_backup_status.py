@@ -10,13 +10,14 @@ BACKUP = Path(__file__).resolve().parents[1] / 'backup.sh'
 
 
 class BackupStatusTests(unittest.TestCase):
-    def run_backup(self, encryption_status=0, brew_status=0, encrypt=True, inventory_failure=None):
+    def run_backup(self, encryption_status=0, brew_status=0, encrypt=True, inventory_failure=None, extra_failure=False):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             home = root / 'home'
             home.mkdir()
             (home / 'Applications').mkdir()
             (home / '.zshrc').write_text('# fixture\n')
+            (home / '.netrc').write_text('machine fixture.invalid login test\n')
             config = home / '.config'
             (config / 'gh').mkdir(parents=True)
             (config / 'starship.toml').write_text('add_newline = false\n')
@@ -40,6 +41,10 @@ class BackupStatusTests(unittest.TestCase):
                 stub = binaries / inventory_failure
                 stub.write_text('#!/bin/sh\nexit 1\n')
                 stub.chmod(0o700)
+            if extra_failure:
+                stub = binaries / 'cp'
+                stub.write_text('#!/bin/sh\ncase "$*" in */extra-settings/netrc*) exit 1;; esac\nexec /bin/cp "$@"\n')
+                stub.chmod(0o700)
             result = subprocess.run(
                 ['/bin/bash', str(scripts / 'backup.sh')], cwd=root,
                 env={**os.environ, 'HOME': str(home), 'CODEX_HOME': str(home / '.codex'),
@@ -51,6 +56,11 @@ class BackupStatusTests(unittest.TestCase):
             if brew_status == 0:
                 self.assertEqual((root / 'mac-migration/dotfiles/.zshrc').read_text(), '# fixture\n')
                 self.assertTrue((root / 'mac-migration/versions.txt').exists())
+                if extra_failure:
+                    self.assertEqual((root / 'mac-migration/extra-settings-failed.txt').read_text(), 'netrc\n')
+                else:
+                    self.assertEqual((root / 'mac-migration/extra-settings/netrc').read_text(),
+                                     (home / '.netrc').read_text())
                 inventory = (root / 'mac-migration/installed-apps.txt').read_text()
                 self.assertIn('Name\tVersion\tPath', inventory)
                 if inventory_failure:
@@ -79,6 +89,13 @@ class BackupStatusTests(unittest.TestCase):
     def test_backup_failure_is_normalized(self):
         result = self.run_backup(brew_status=2)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+
+    def test_extra_failure_finishes_other_exports_but_reports_failure(self):
+        result = self.run_backup(extra_failure=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('校驗通過', result.stdout)
+        self.assertIn('備份不完整', result.stdout)
+        self.assertNotIn('匯出完成！', result.stdout)
 
     def test_encryption_success(self):
         result = self.run_backup()

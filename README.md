@@ -1,7 +1,20 @@
 # mac-migrate
 
-用 shell script 在換 Mac 時備份舊機器、還原到新機器。
-請將 `backup.sh`、`restore.sh`、`encrypt-backup.sh` 與共用的 `migration-common.sh`、`migration-ai.sh`、`migration-integrity.pl` 放在一起（建議直接 clone 專案）。
+備份 Mac 的開發環境、設定與指定 App 本機資料，供換機或原機清除重裝後還原。
+
+**目前不備份 `~/Downloads`、`~/Programming` 或整個家目錄。** 這些資料需另外複製到外部儲存。
+
+## 取得專案
+
+在 Terminal 執行：
+
+```bash
+git clone https://github.com/ddsakura/mac-migration.git mac-migrate
+cd mac-migrate
+```
+
+以下指令均在專案目錄執行，另有說明的除外。若系統提示安裝 Command Line Tools，先完成安裝再重試。
+新機或重裝後也先執行上述指令，取得還原程式。
 
 ## 流程
 
@@ -17,13 +30,24 @@
 
 ## 使用方式
 
-### 舊機器：匯出
+### 備份：換機或清除重裝前
 
-在任意目錄執行，會在該目錄下建立 `mac-migration/`：
+先關閉相關 AI App、CLI 與編輯器，再從 Terminal 執行：
 
 ```bash
 bash backup.sh
 ```
+
+備份會寫入**執行指令當下目錄**的 `mac-migration/`。依上述步驟操作時，位於專案目錄內。
+若要直接備份到外接硬碟，先切換到備份目的地，再用完整路徑執行 script：
+
+```bash
+# 將兩個範例路徑改成自己的路徑
+cd "/Volumes/你的外接硬碟/備份目錄"
+bash "/你的專案路徑/mac-migrate/backup.sh"
+```
+
+目的地資料夾需先建立，且不能位於本次備份的來源目錄內。
 
 若已有 `mac-migration/`，會先改名為 `mac-migration-YYYYMMDD-HHMMSS/`，
 再建立全新的備份資料夾，避免上次的檔案（包含 SSH keys）殘留。
@@ -34,9 +58,8 @@ bash backup.sh
 
 使用 macOS 內建工具建立 AES-256 加密 `.dmg`，新舊 Mac 都不需額外安裝 App。
 
-`backup.sh` 完成後會詢問是否加密，預設不加密。請將
-`encrypt-backup.sh` 與 `backup.sh` 放在同一目錄。
-也可以直接加密已經產生的備份，不必重新備份：
+`backup.sh` 完成後會詢問是否加密，預設不加密。
+也可以在專案目錄執行以下指令，加密既有備份：
 
 ```bash
 bash encrypt-backup.sh /path/to/mac-migration
@@ -77,33 +100,38 @@ bash restore.sh --migration-dir /Volumes/mac-migration
 也可以先把磁碟內容複製到本機的 `mac-migration/` 再還原。
 完成後在 Finder 退出磁碟；`restore.sh` 接受掛載後的資料夾，不直接接受 `.dmg`。
 
-### 新機器：安裝還原
+### 還原：新機或重裝後
 
-將 `mac-migration/` 資料夾傳到新機器，放在同一個目錄下執行：
-
-```bash
-bash restore.sh
-```
-
-或指定資料夾路徑：
+先 clone 本專案，接上備份硬碟；若使用 DMG，先雙擊並輸入密碼掛載。
+保持相關 AI App、CLI 與編輯器關閉，在專案目錄先預覽，再執行還原：
 
 ```bash
+# /path/to/mac-migration 請改成備份資料夾或 DMG 掛載路徑
+bash restore.sh --dry-run --migration-dir /path/to/mac-migration
 bash restore.sh --migration-dir /path/to/mac-migration
 ```
 
-先檢查會做哪些事、但不實際安裝或覆蓋檔案：
+`--dry-run` 會校驗備份並預覽操作，不會安裝或覆寫資料。
+若備份就在目前目錄的 `mac-migration/`，可省略 `--migration-dir`。
+還原後開啟備份中的 `installed-apps.txt`，逐項補裝 App Store 或手動下載的 App。
 
-```bash
-bash restore.sh --dry-run --migration-dir /path/to/mac-migration
-```
+### 原機清除重裝前
+
+- 將本專案產生的備份、另外保存的 Downloads 與 Programming 放到外部儲存；不要只留在原機。
+- Programming 請保留隱藏檔、`.git`、`.env`、未提交及未追蹤檔案。Git push 不涵蓋這些全部資料。
+- 從外部副本執行[完整性驗證](#完整性驗證與舊備份)；加密 DMG 先確認密碼可用。此校驗只涵蓋本專案備份，另存的 Downloads／Programming 需另外確認。
+- 備份可讀且重要資料齊全後再清除原機。Dry-run 是預檢，不是完整還原演練。
 
 ## 備份內容
 
-| 項目 | 說明 |
+下表左欄是產生的 `mac-migration/` 內的位置，不是原機上的來源目錄。
+`dotfiles/` 是 script 建立的分類資料夾，**不會掃描或備份家目錄下所有隱藏檔**。
+
+| 備份內位置 | 備份來源／內容 |
 |---|---|
 | `Brewfile` | 所有 Homebrew packages / casks / taps |
-| `dotfiles/` | `.zshrc` / `.gitconfig` / `.npmrc` 等 shell & 工具設定 |
-| `dotfiles/.config/` | 整個 `~/.config/`，含 Starship、GitHub CLI、其他工具的設定與隱藏檔 |
+| `dotfiles/` | 家目錄中指定的 14 個設定檔，以及整個 `~/.config/`；完整清單見下方 |
+| `extra-settings/` | 額外 Shell 設定、服務憑證、雲端工具、GPG、Docker 設定及自訂腳本，完整清單見下方 |
 | `mackup.cfg` | mackup storage 設定（供 `--config-file` 使用） |
 | `developer/` | AI 工具與編輯器使用者資料（詳見下方範圍） |
 | `extensions/` | VS Code 系列預設 profile 的擴充套件 ID 與版本清單 |
@@ -112,6 +140,41 @@ bash restore.sh --dry-run --migration-dir /path/to/mac-migration
 | `versions.txt` | 各開發工具版本號紀錄 |
 | `installed-apps.txt` | `/Applications` 與 `~/Applications` 的 App 名稱、版本、路徑，供新機重新安裝參考 |
 | `backup-format` / `manifest.json` | v1 格式標記、完整相對路徑清單與 SHA-256／符號連結校驗資訊 |
+
+`dotfiles/` 收集以下來源，來源不存在就略過：
+
+| 來源（相對於 `~/`） | 備份內位置 |
+|---|---|
+| `.zshrc`、`.zprofile`、`.zshenv`、`.bashrc`、`.bash_profile`、`.aliases` | `dotfiles/` 下的同名檔案 |
+| `.gitconfig`、`.gitignore_global`、`.gitignore` | `dotfiles/` 下的同名檔案 |
+| `.vimrc`、`.editorconfig` | `dotfiles/` 下的同名檔案 |
+| `.curlrc`、`.wgetrc`、`.npmrc` | `dotfiles/` 下的同名檔案 |
+| `.config/` 的全部內容，含隱藏檔、Starship、GitHub CLI 與其他工具設定 | `dotfiles/.config/` |
+
+其他家目錄隱藏檔不會因為是 dotfile 就自動備份。
+`.ssh/`、`.codex/` 等另依各自的備份規則處理，見上表及下方範圍說明。
+
+`extra-settings/` 使用以下固定清單，存在就備份，不存在就略過：
+
+| 來源（相對於 `~/`） | 備份內位置（相對於 `extra-settings/`） |
+|---|---|
+| `.profile`、`.zlogin`、`.zlogout` | `profile`、`zlogin`、`zlogout` |
+| `.netrc`、`.pypirc` | `netrc`、`pypirc` |
+| `.aws/`、`.azure/`、`.kube/`、`.gnupg/` | `aws/`、`azure/`、`kube/`、`gnupg/` |
+| `.docker/config.json`、`.docker/contexts/` | `docker-config`、`docker-contexts/` |
+| `bin/`、`.local/bin/` | `bin/`、`local-bin/` |
+
+這些項目可能包含密碼、Token 與 GPG 私鑰，會自動納入備份與完整性清單，建議使用加密 DMG。
+目錄包含隱藏檔與快取，但排除 socket／device 等執行期物件；備份前請停止相關工具的寫入。
+內部符號連結只保存連結，不收集外部目標；來源根節點若是符號連結，會提示略過，需另備份目標。
+不整包備份 `.local/share/`，不包含 Docker 容器／images／volumes，亦不收集設定引用的外部憑證或腳本。
+自訂環境變數指向其他位置的工具資料未自動收集；Docker credential helper 所使用的 Keychain 也不在範圍內。
+還原時逐項詢問，接受後整份替換，現有資料另存 `.before-restore-*`；不合併目錄，也不跨項目回復。
+舊備份沒有這些項目時直接略過。還原不會執行 Shell 設定或腳本，也不保證服務登入仍有效。
+單一額外項目複製失敗時，會繼續其他項目、後續備份與校驗，並將失敗 ID 寫入
+`extra-settings-failed.txt`（也納入校驗）。最後回傳狀態碼 `1`，不顯示完成或進入加密詢問；
+請修正錯誤後重新備份，再清除原機。部分副本保留供檢查，但還原會略過失敗清單中的項目，
+避免用不完整資料取代現有設定。校驗通過只表示已保存的內容一致，不表示所有來源都備份成功。
 
 `installed-apps.txt` 也涵蓋上述位置中手動下載安裝的 `.app`，包含 Utilities 等子資料夾，
 但不列出 App bundle 內附的 helper apps、不追蹤一般資料夾符號連結，也不掃描 `/System/Applications` 或其他位置。
@@ -128,6 +191,7 @@ bash restore.sh --dry-run --migration-dir /path/to/mac-migration
 | Xcode Command Line Tools | 自動安裝 |
 | Homebrew | 自動安裝，並從 Brewfile 還原所有套件 |
 | dotfiles | 自動複製回 `~/` |
+| 額外設定與自訂腳本 | 逐項確認後完整還原，保留原資料；來源清單見 `extra-settings/` 說明 |
 | `.config` | 合併還原至 `~/.config/`；覆蓋同名檔案，保留新機器其他檔案，亦相容舊版僅備份 gh 的格式 |
 | AI 資料 | 預先校驗所有副本，批次替換；失敗反向回復，成功時仍保留 `.before-restore-*` 原資料 |
 | 編輯器資料 | 延續逐一目錄的完整副本還原與 `.before-restore-*` 保護，不納入 AI 交易 |
@@ -175,7 +239,7 @@ bash restore.sh --dry-run --migration-dir /path/to/mac-migration
 若正在 Codex／Claude 裡操作，請改到外部終端機，在關閉相關 App／CLI 後執行實際備份。
 
 Codex 本機資料、Claude Code、桌面 App 的設定／資料，**不等於 ChatGPT 或 Claude 雲端聊天匯出**。
-本流程不包含 Keychain、App sandbox 的完整容器，也不自動收集 `~/Programming` 或其他外部專案。
+本流程不包含 Keychain、App sandbox 的完整容器、`~/Downloads`、`~/Programming` 或其他外部專案。
 `~/Documents/Codex` 本身包含的檔案會備份；其中連向外部專案的符號連結只保存連結，不追蹤目標。
 專案內的 `.claude/`、`AGENTS.md`、`.env` 等需另行備份。
 登入狀態及跨 App／CLI 版本相容性不保證，仍可能需要重新登入或手動調整。
@@ -184,7 +248,7 @@ Codex 本機資料、Claude Code、桌面 App 的設定／資料，**不等於 C
 
 ## 完整性驗證與舊備份
 
-新備份保持原有 `dotfiles/`、`developer/`、`ssh/` 等結構，不新增 ZIP／tar.gz 流程：
+備份使用資料夾格式，可選擇封裝為加密 DMG：
 
 - 開始建立時寫入 `backup-format`（`mac-migration-v1`）。完成後才寫入 `manifest.json`。
   有版本標記但沒有清單的中斷備份會被拒絕，不會當成可還原的舊備份。
@@ -196,7 +260,7 @@ Codex 本機資料、Claude Code、桌面 App 的設定／資料，**不等於 C
 - **SHA-256 用來偵測搬移損壞／意外變更，不提供來源認證**；不能防止攻擊者同時改寫資料及清單。
   請只還原可信來源，也不要在完成後自行修改備份內容。
 - 完全沒有版本標記與清單的舊主流程備份仍可還原，但會明確顯示「未驗證檔案完整性」。
-  舊獨立腳本的 ZIP／tar.gz 不支援直接匯入；本專案不依賴 `chatgpt-backup`／`claude-backup` 資料夾。
+  不支援直接匯入其他工具產生的 ZIP／tar.gz。
 
 可先執行唯讀檢查：
 
@@ -263,4 +327,4 @@ Dry-run 仍預覽所有確認為「是」的分支，不執行變更。
 - **macOS defaults**：套用前需要 Terminal 有完整磁碟存取權限（系統設定 → 隱私權與安全性）
 - **mackup**：執行 restore 前需確認 storage 已同步。storage 設定備份於 `mac-migration/mackup.cfg`，restore.sh 會自動以 `--config-file` 傳入，支援 iCloud、Dropbox、Google Drive、或自訂路徑（`file_system`）
 - **VS Code `code` 指令**：安裝後需手動註冊 shell command 才能在終端機使用 `code`。開啟 Command Palette → 執行「Shell Command: Install 'code' command in PATH」。詳見 [官方說明](https://code.visualstudio.com/docs/setup/mac#_launch-vs-code-from-the-command-line)
-- `mac-migration/` 資料夾包含敏感資訊，不應上傳到任何雲端或公開服務
+- `mac-migration/` 包含敏感資訊，不要公開分享；若透過雲端搬移，請使用加密 DMG。

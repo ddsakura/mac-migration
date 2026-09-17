@@ -20,6 +20,58 @@ DEVELOPER_PATHS=(
   "$HOME/.vscode/argv.json" "$HOME/.cursor/argv.json"
 )
 EDITOR_COMMANDS=(code code-insiders cursor windsurf)
+# Explicit extra paths shared by backup and restore; no blanket ~/.local/share copy.
+EXTRA_IDS=(profile zlogin zlogout netrc pypirc aws azure kube gnupg docker-config docker-contexts bin local-bin)
+EXTRA_PATHS=(
+  "$HOME/.profile" "$HOME/.zlogin" "$HOME/.zlogout" "$HOME/.netrc" "$HOME/.pypirc"
+  "$HOME/.aws" "$HOME/.azure" "$HOME/.kube" "$HOME/.gnupg"
+  "$HOME/.docker/config.json" "$HOME/.docker/contexts" "$HOME/bin" "$HOME/.local/bin"
+)
+
+backup_extra_settings() {
+  local root="$1" index src dest status=0 failed
+  for index in "${!EXTRA_IDS[@]}"; do
+    src="${EXTRA_PATHS[$index]}"
+    dest="$root/extra-settings/${EXTRA_IDS[$index]}"
+    failed=false
+    if [ -L "$src" ]; then
+      printf '略過符號連結根路徑，請另備份外部目標: %s\n' "$src" >&2
+    elif [ -d "$src" ]; then
+      copy_tree "$src" "$dest" || failed=true
+    elif [ -f "$src" ]; then
+      mkdir -p "$root/extra-settings" && cp -p "$src" "$dest" || failed=true
+    fi
+    if [ "$failed" = true ]; then
+      printf '備份不完整: %s（繼續其他項目）\n' "$src" >&2
+      printf '%s\n' "${EXTRA_IDS[$index]}" >> "$root/extra-settings-failed.txt" || return 1
+      status=1
+    fi
+  done
+  return "$status"
+}
+
+restore_extra_settings() {
+  local root="$1" index src dest
+  for index in "${!EXTRA_IDS[@]}"; do
+    src="$root/extra-settings/${EXTRA_IDS[$index]}"
+    dest="${EXTRA_PATHS[$index]}"
+    if [ -f "$root/extra-settings-failed.txt" ] &&
+        grep -Fxq "${EXTRA_IDS[$index]}" "$root/extra-settings-failed.txt"; then
+      printf '略過不完整的備份項目，請從原機重新備份: %s\n' "$dest" >&2
+      continue
+    fi
+    if [ -e "$src" ] || [ -L "$src" ]; then
+      if [ -L "$src" ]; then
+        printf '拒絕還原符號連結資料根節點: %s\n' "$src" >&2
+        return 1
+      fi
+      integrity destinations "$root" "$HOME" "$dest" || return 1
+      if confirm "還原 $dest？（現有資料會另存，可能包含憑證或私鑰）"; then
+        run_or_dry "會還原完整資料（原資料另存 .before-restore-*）: $dest <= $src" restore_snapshot "$src" "$dest"
+      fi
+    fi
+  done
+}
 DEFAULTS_DOMAINS=(
   com.apple.dock com.apple.finder com.apple.screencapture com.apple.Terminal
   com.apple.Safari com.apple.TextEdit NSGlobalDomain
