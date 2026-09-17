@@ -15,6 +15,7 @@ class BackupStatusTests(unittest.TestCase):
             root = Path(tmp)
             home = root / 'home'
             home.mkdir()
+            (home / 'Applications').mkdir()
             (home / '.zshrc').write_text('# fixture\n')
             config = home / '.config'
             (config / 'gh').mkdir(parents=True)
@@ -51,7 +52,9 @@ class BackupStatusTests(unittest.TestCase):
                 self.assertEqual((root / 'mac-migration/dotfiles/.zshrc').read_text(), '# fixture\n')
                 self.assertTrue((root / 'mac-migration/versions.txt').exists())
                 inventory = (root / 'mac-migration/installed-apps.txt').read_text()
-                self.assertIn('WARNING' if inventory_failure else 'Name\tVersion\tPath', inventory)
+                self.assertIn('Name\tVersion\tPath', inventory)
+                if inventory_failure:
+                    self.assertIn('WARNING', inventory)
                 self.assertTrue((root / 'mac-migration/manifest.json').exists())
                 saved = root / 'mac-migration/dotfiles/.config'
                 for item in ('starship.toml', '.hidden', 'gh/config.yml'):

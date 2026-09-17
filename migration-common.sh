@@ -37,13 +37,13 @@ integrity() { /usr/bin/perl "$INTEGRITY_TOOL" "$@"; }
 # Read bundle metadata only; never launch an app. Arguments allow isolated fixtures.
 list_installed_apps() (
   local root app name version plist paths scan_status=0
+  printf '# Installed apps — reinstall reference only (no app binaries)\n'
+  printf '# Tab-separated columns; values use Bash %%q escaping for special characters.\n'
+  printf 'Name\tVersion\tPath\n'
   paths="$(mktemp "${TMPDIR:-/tmp}/mac-migrate-apps.XXXXXX")" || exit 1
   trap 'rm -f -- "$paths"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  printf '# Installed apps — reinstall reference only (no app binaries)\n'
-  printf '# Tab-separated columns; values use Bash %%q escaping for special characters.\n'
-  printf 'Name\tVersion\tPath\n'
   for root in "$@"; do
     [ -d "$root" ] || continue
     # Prune bundles to omit embedded helper apps, but scan folders such as Utilities.
