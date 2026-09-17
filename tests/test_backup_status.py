@@ -25,7 +25,8 @@ class BackupStatusTests(unittest.TestCase):
             scripts = root / 'scripts'
             scripts.mkdir()
             shutil.copy2(BACKUP, scripts / 'backup.sh')
-            shutil.copy2(BACKUP.parent / 'migration-common.sh', scripts / 'migration-common.sh')
+            for helper in ('migration-common.sh', 'migration-ai.sh', 'migration-integrity.pl'):
+                shutil.copy2(BACKUP.parent / helper, scripts / helper)
             (scripts / 'encrypt-backup.sh').write_text(f'exit {encryption_status}\n')
             binaries = root / 'bin'
             binaries.mkdir()

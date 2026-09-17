@@ -60,7 +60,7 @@ if [ -z "$BACKUP_PASSWORD" ]; then
   exit 1
 fi
 if ! printf '%s\0' "$BACKUP_PASSWORD" | hdiutil create "$TEMP_ARCHIVE" \
-    -srcfolder "$SOURCE_DIR" -volname mac-migration -fs "Case-sensitive HFS+" \
+    -srcfolder "$SOURCE_DIR" -volname mac-migration -fs "Case-sensitive APFS" \
     -format UDZO -encryption AES-256 -stdinpass; then
   echo "加密失敗，明文備份已保留: $SOURCE_DIR" >&2
   exit 1

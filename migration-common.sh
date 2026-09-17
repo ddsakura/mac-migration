@@ -4,13 +4,13 @@
 # 共用路徑清單：備份與還原共用，避免只備份卻漏還原。
 # 此檔需與 backup.sh / restore.sh 放在一起。
 DEVELOPER_IDS=(
-  codex claude-code claude-state agent-skills
+  codex claude-code claude-state agent-skills codex-documents
   codex-desktop codex-desktop-support claude-desktop chatgpt-desktop
   vscode vscode-insiders cursor windsurf jetbrains
   vim gvimrc ideavimrc emacs emacs-config vscode-argv cursor-argv
 )
 DEVELOPER_PATHS=(
-  "${CODEX_HOME:-$HOME/.codex}" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" "$HOME/.claude.json" "$HOME/.agents"
+  "${CODEX_HOME:-$HOME/.codex}" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" "$HOME/.claude.json" "$HOME/.agents" "$HOME/Documents/Codex"
   "$HOME/Library/Application Support/Codex" "$HOME/Library/Application Support/com.openai.codex"
   "$HOME/Library/Application Support/Claude" "$HOME/Library/Application Support/com.openai.chat"
   "$HOME/Library/Application Support/Code/User" "$HOME/Library/Application Support/Code - Insiders/User"
@@ -27,15 +27,88 @@ DEFAULTS_DOMAINS=(
   com.googlecode.iterm2 com.openai.codex com.openai.chat com.anthropic.claudefordesktop
 )
 
+COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INTEGRITY_TOOL="$COMMON_DIR/migration-integrity.pl"
+# Resolve before brew shellenv can change PATH; command stubs remain injectable in tests.
+PGREP_BIN="$(command -v pgrep || true)"
+
+integrity() { /usr/bin/perl "$INTEGRITY_TOOL" "$@"; }
+
+is_ai_id() {
+  case "$1" in codex*|claude*|agent-skills|chatgpt-desktop) return 0 ;; *) return 1 ;; esac
+}
+
+select_ai_data() {
+  local mode="$1" root="$2" index path
+  AI_INDICES=()
+  AI_SELECTED_IDS=()
+  AI_DESTINATIONS=()
+  for index in "${!DEVELOPER_IDS[@]}"; do
+    is_ai_id "${DEVELOPER_IDS[$index]}" || continue
+    if [ "$mode" = backup ]; then path="${DEVELOPER_PATHS[$index]}"
+    else path="$root/developer/${DEVELOPER_IDS[$index]}"; fi
+    if [ -d "$path" ] || [ -f "$path" ]; then
+      AI_INDICES+=("$index")
+      AI_SELECTED_IDS+=("${DEVELOPER_IDS[$index]}")
+      AI_DESTINATIONS+=("${DEVELOPER_PATHS[$index]}")
+    fi
+  done
+}
+
+# Preferences are AI data too, even when the corresponding user-data directory is absent.
+select_ai_preferences() {
+  local mode="$1" root="$2" domain id path
+  AI_PREFERENCE_IDS=()
+  for domain in com.openai.codex com.openai.chat com.anthropic.claudefordesktop; do
+    case "$domain" in
+      com.openai.codex) id=codex-desktop ;;
+      com.openai.chat) id=chatgpt-desktop ;;
+      *) id=claude-desktop ;;
+    esac
+    if [ "$mode" = backup ]; then
+      path="$HOME/Library/Preferences/$domain"
+    else
+      path="$root/defaults/${domain//./_}"
+    fi
+    if [ -f "$path.plist" ] || [ -f "$path.txt" ]; then AI_PREFERENCE_IDS+=("$id"); fi
+  done
+}
+
+check_ai_processes() {
+  local id name status checked=" "
+  local names=()
+  for id in "$@"; do
+    case "$id" in
+      codex*) names+=(Codex codex) ;;
+      claude*) names+=(Claude claude) ;;
+      agent-skills) names+=(Codex codex Claude claude) ;;
+      chatgpt-desktop) names+=(ChatGPT) ;;
+    esac
+  done
+  for name in "${names[@]}"; do
+    case "$checked" in *" $name "*) continue ;; esac
+    checked="$checked$name "
+    if [ -z "$PGREP_BIN" ]; then
+      printf '無法可靠檢查程序：找不到 pgrep；中止。\n' >&2
+      return 1
+    fi
+    if "$PGREP_BIN" -x "$name" >/dev/null 2>&1; then
+      printf '程序仍在執行: %s；請關閉後重試，未自動終止任何程序。\n' "$name" >&2
+      return 1
+    else
+      status=$?
+      if [ "$status" -ne 1 ]; then
+        printf '無法可靠檢查程序: %s（pgrep 狀態 %s）；中止。\n' "$name" "$status" >&2
+        return 1
+      fi
+    fi
+  done
+}
+
 # 合併目錄；保留內部符號連結與權限，但不複製 socket/device 等執行期物件。
 copy_tree() {
-  mkdir -p "$2"
-  local source_real dest_real
-  source_real="$(cd "$1" && pwd -P)"
-  dest_real="$(cd "$2" && pwd -P)"
-  case "$dest_real/" in
-    "$source_real/"*) echo "拒絕將目錄複製到其自身內部: $1 -> $2" >&2; return 1 ;;
-  esac
+  integrity disjoint "$1" "$2" || return 1
+  mkdir -p "$2" || return 1
   rsync -rlpt -- "$1/" "$2/"
 }
 
@@ -82,3 +155,5 @@ restore_snapshot() (
   fi
   [ -z "$previous" ] || printf '原資料已保留: %s\n' "$previous"
 )
+
+source "$COMMON_DIR/migration-ai.sh"
