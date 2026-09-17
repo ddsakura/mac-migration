@@ -241,6 +241,14 @@ if [ -f "$HOME/.nvm/nvm.sh" ]; then
   success "nvm 版本清單已記錄"
 fi
 
+info "匯出已安裝 App 清單（名稱、版本、路徑）..."
+if list_installed_apps /Applications "$HOME/Applications" > "$MIGRATION_DIR/installed-apps.txt"; then
+  success "App 清單已匯出: $MIGRATION_DIR/installed-apps.txt（供新機重新安裝參考）"
+else
+  warn "App 清單匯出不完整或失敗；其餘備份與校驗會繼續。"
+  printf '# WARNING: App inventory incomplete or unavailable; do not treat as a complete list.\n' >> "$MIGRATION_DIR/installed-apps.txt"
+fi
+
 # Detect applications reopened during the copy; unfinished v1 backups lack a manifest.
 check_ai_processes "${AI_SELECTED_IDS[@]}" "${AI_PREFERENCE_IDS[@]}"
 integrity create "$MIGRATION_DIR"

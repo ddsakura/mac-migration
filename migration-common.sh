@@ -34,6 +34,42 @@ PGREP_BIN="$(command -v pgrep || true)"
 
 integrity() { /usr/bin/perl "$INTEGRITY_TOOL" "$@"; }
 
+# Read bundle metadata only; never launch an app. Arguments allow isolated fixtures.
+list_installed_apps() (
+  local root app name version plist paths scan_status=0
+  paths="$(mktemp "${TMPDIR:-/tmp}/mac-migrate-apps.XXXXXX")" || exit 1
+  trap 'rm -f -- "$paths"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  printf '# Installed apps — reinstall reference only (no app binaries)\n'
+  printf '# Tab-separated columns; values use Bash %%q escaping for special characters.\n'
+  printf 'Name\tVersion\tPath\n'
+  for root in "$@"; do
+    [ -d "$root" ] || continue
+    # Prune bundles to omit embedded helper apps, but scan folders such as Utilities.
+    if ! find -H "$root" -name '*.app' -prune -print0 > "$paths"; then
+      printf '# WARNING: scan incomplete for %q\n' "$root"
+      scan_status=1
+    fi
+    while IFS= read -r -d '' app; do
+      [ -d "$app" ] || continue
+      plist="$app/Contents/Info.plist"
+      name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$plist" 2>/dev/null)" || name=""
+      if [ -z "$name" ]; then
+        name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$plist" 2>/dev/null)" || name=""
+      fi
+      [ -n "$name" ] || name="$(basename "$app" .app)"
+      version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist" 2>/dev/null)" || version=""
+      if [ -z "$version" ]; then
+        version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist" 2>/dev/null)" || version=""
+      fi
+      [ -n "$version" ] || version=unknown
+      printf '%q\t%q\t%q\n' "$name" "$version" "$app"
+    done < "$paths"
+  done
+  return "$scan_status"
+)
+
 is_ai_id() {
   case "$1" in codex*|claude*|agent-skills|chatgpt-desktop) return 0 ;; *) return 1 ;; esac
 }
