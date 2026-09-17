@@ -25,6 +25,7 @@ class BackupStatusTests(unittest.TestCase):
             scripts = root / 'scripts'
             scripts.mkdir()
             shutil.copy2(BACKUP, scripts / 'backup.sh')
+            shutil.copy2(BACKUP.parent / 'migration-common.sh', scripts / 'migration-common.sh')
             (scripts / 'encrypt-backup.sh').write_text(f'exit {encryption_status}\n')
             binaries = root / 'bin'
             binaries.mkdir()
@@ -35,9 +36,10 @@ class BackupStatusTests(unittest.TestCase):
                 stub.chmod(0o700)
             result = subprocess.run(
                 ['/bin/bash', str(scripts / 'backup.sh')], cwd=root,
-                env={**os.environ, 'HOME': str(home), 'PATH': f'{binaries}:/usr/bin:/bin'},
-                # First read consumes one character; the second consumes a line.
-                input='ny\n' if encrypt else 'nn\n', text=True, capture_output=True,
+                env={**os.environ, 'HOME': str(home), 'CODEX_HOME': str(home / '.codex'),
+                     'CLAUDE_CONFIG_DIR': str(home / '.claude'), 'PATH': f'{binaries}:/usr/bin:/bin'},
+                # Each prompt consumes its own complete answer line.
+                input='n\ny\n' if encrypt else 'n\nn\n', text=True, capture_output=True,
                 timeout=20,
             )
             if brew_status == 0:

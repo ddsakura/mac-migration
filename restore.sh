@@ -5,6 +5,9 @@
 # ============================================================
 
 set -e
+umask 077
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/migration-common.sh"
 
 # ── 參數處理 ───────────────────────────────────────────────
 MIGRATION_DIR="$(pwd)/mac-migration"
@@ -92,9 +95,11 @@ confirm() {
     dryrun "會詢問: $1"
     return 0
   fi
-  read -p "  $1 [Y/n] " -n 1 -r
-  echo ""
-  [[ $REPLY =~ ^[Nn]$ ]] && return 1 || return 0
+  local reply
+  if ! IFS= read -r -p "  $1 [y/N] " reply; then
+    return 1
+  fi
+  [[ "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]
 }
 
 restore_dotfile() {
@@ -221,6 +226,8 @@ if [ -d "$DOTFILES_DIR" ]; then
   restore_dotfile ".vimrc"
   restore_dotfile ".editorconfig"
   restore_dotfile ".npmrc"
+  restore_dotfile ".curlrc"
+  restore_dotfile ".wgetrc"
 
   # 新備份包含整個 .config；舊版僅有 gh 的備份仍可還原。
   CONFIG_SOURCE=""
@@ -242,20 +249,47 @@ if [ -d "$DOTFILES_DIR" ]; then
     fi
   fi
 
-  # 套用 .zshrc
-  if [ -f "$HOME/.zshrc" ]; then
-    if [ "$DRY_RUN" = true ]; then
-      dryrun "會載入: $HOME/.zshrc"
-    else
-      source "$HOME/.zshrc" 2>/dev/null || true
-    fi
-  fi
+  info "Shell 設定已複製；請另開終端機載入。"
+
 else
   warn "找不到 dotfiles 備份，跳過"
 fi
 
 # 還原的 .zprofile 可能覆蓋步驟 2 的設定，需再確保一次。
 ensure_homebrew_shellenv
+
+# AI / 編輯器可能含資料庫；還原前須關閉相關程式。
+if [ -d "$MIGRATION_DIR/developer" ]; then
+  warn "還原 AI 工具與編輯器前請先關閉相關 App / CLI；原資料會改名保留，再套用備份。"
+  if confirm "還原 AI 工具與編輯器使用者資料？"; then
+    for index in "${!DEVELOPER_IDS[@]}"; do
+      src="$MIGRATION_DIR/developer/${DEVELOPER_IDS[$index]}"
+      dest="${DEVELOPER_PATHS[$index]}"
+      if [ -d "$src" ] || [ -f "$src" ]; then
+        run_or_dry "會還原完整資料（既有資料另存 .before-restore-*）: $dest <= $src" restore_snapshot "$src" "$dest"
+      fi
+    done
+  fi
+fi
+for editor in "${EDITOR_COMMANDS[@]}"; do
+  list="$MIGRATION_DIR/extensions/$editor.txt"
+  [ -s "$list" ] || continue
+  if ! command -v "$editor" >/dev/null 2>&1; then
+    warn "找不到 $editor CLI；請安裝並啟用 CLI 後重新執行以還原擴充套件。清單: $list"
+    continue
+  fi
+  if confirm "依備份清單安裝 $editor 擴充套件？"; then
+    while IFS= read -r extension || [ -n "$extension" ]; do
+      [ -n "$extension" ] || continue
+      if [[ ! "$extension" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*\.[A-Za-z0-9][A-Za-z0-9_.-]*(@[A-Za-z0-9][A-Za-z0-9_.+-]*)?$ ]]; then
+        warn "略過格式不正確的擴充套件項目"
+        continue
+      fi
+      run_or_dry "會安裝 $editor 擴充套件: $extension" "$editor" --install-extension "$extension" ||
+        warn "擴充套件安裝失敗: $extension"
+    done < "$list"
+  fi
+done
 
 # ════════════════════════════════════════════
 # 4. SSH 設定
@@ -264,21 +298,44 @@ step "4. SSH 設定"
 run_or_dry "會建立: $HOME/.ssh" mkdir -p "$HOME/.ssh"
 run_or_dry "會設定權限: chmod 700 $HOME/.ssh" chmod 700 "$HOME/.ssh"
 
-# config 檔
-if [ -f "$SSH_DIR/config" ]; then
-  if [ "$DRY_RUN" = true ]; then
-    if [ -e "$HOME/.ssh/config" ]; then
-      dryrun "會覆蓋: $HOME/.ssh/config <= $SSH_DIR/config"
+restore_ssh_basics() {
+  # 新舊格式共用的基本設定還原
+  if [ -f "$SSH_DIR/config" ]; then
+    if [ "$DRY_RUN" = true ]; then
+      if [ -e "$HOME/.ssh/config" ]; then
+        dryrun "會覆蓋: $HOME/.ssh/config <= $SSH_DIR/config"
+      else
+        dryrun "會還原: $HOME/.ssh/config <= $SSH_DIR/config"
+      fi
+      dryrun "會設定權限: chmod 644 $HOME/.ssh/config"
     else
-      dryrun "會還原: $HOME/.ssh/config <= $SSH_DIR/config"
+      cp "$SSH_DIR/config" "$HOME/.ssh/config"
+      chmod 644 "$HOME/.ssh/config"
+      success "還原: SSH config"
     fi
-    dryrun "會設定權限: chmod 644 $HOME/.ssh/config"
-  else
-    cp "$SSH_DIR/config" "$HOME/.ssh/config"
-    chmod 644 "$HOME/.ssh/config"
-    success "還原: SSH config"
   fi
-fi
+
+  if [ -f "$SSH_DIR/known_hosts" ]; then
+    run_or_dry "會還原 SSH known_hosts" cp "$SSH_DIR/known_hosts" "$HOME/.ssh/known_hosts"
+  fi
+
+}
+
+if [ -f "$MIGRATION_DIR/ssh-format" ] && [ "$(cat "$MIGRATION_DIR/ssh-format")" = full-v1 ]; then
+  if confirm "還原完整 SSH 目錄（含私鑰及設定，同名檔案會覆蓋）？"; then
+    run_or_dry "會合併完整 SSH: $SSH_DIR -> $HOME/.ssh" copy_tree "$SSH_DIR" "$HOME/.ssh"
+    if [ "$DRY_RUN" = true ]; then
+      dryrun "會設定 SSH 目錄 700、一般檔案 600（不追蹤符號連結）"
+    else
+      find "$HOME/.ssh" -type d -exec chmod 700 {} +
+      find "$HOME/.ssh" -type f -exec chmod 600 {} +
+    fi
+  else
+    restore_ssh_basics
+    skip "已略過完整 SSH 還原；只還原 config / known_hosts，未還原私鑰及其他 Include 檔案"
+  fi
+else
+restore_ssh_basics
 
 # Private keys（如果有備份）
 KEY_COUNT=$(find "$SSH_DIR" -name "id_*" ! -name "*.pub" 2>/dev/null | wc -l | tr -d ' ')
@@ -313,6 +370,8 @@ else
       read -r
     fi
   fi
+fi
+
 fi
 
 # ════════════════════════════════════════════
@@ -350,55 +409,37 @@ warn "套用 macOS 系統設定前，請確認 Terminal 已有完整磁碟存取
 echo "  系統設定 → 隱私權與安全性 → 完整磁碟存取權限 → 加入 Terminal"
 echo ""
 
-if confirm "套用 macOS defaults？"; then
-
-  # ── Dock ──
-  if [ "$DRY_RUN" = true ]; then
-    dryrun "會套用 Dock defaults 並重啟 Dock"
-    dryrun "會套用 Finder defaults 並重啟 Finder"
-    dryrun "會套用截圖、鍵盤、觸控板、TextEdit 與文件儲存偏好"
-  else
-    defaults write com.apple.dock "autohide"        -bool "true"
-    defaults write com.apple.dock "show-recents"    -bool "false"
-    defaults write com.apple.dock "tilesize"        -int  "48"
-    defaults write com.apple.dock "mineffect"       -string "scale"
-    killall Dock
-    success "Dock 設定已套用"
-
-    # ── Finder ──
-    defaults write com.apple.finder "ShowPathbar"       -bool "true"
-    defaults write com.apple.finder "ShowStatusBar"     -bool "true"
-    defaults write com.apple.finder "FXPreferredViewStyle" -string "Nlsv"  # list view
-    defaults write com.apple.finder "AppleShowAllFiles" -bool "true"
-    defaults write com.apple.finder "_FXShowPosixPathInTitle" -bool "true"
-    defaults write com.apple.finder "FXDefaultSearchScope" -string "SCcf"  # 搜尋目前資料夾
-    killall Finder
-    success "Finder 設定已套用"
-
-    # ── 截圖 ──
-    defaults write com.apple.screencapture "location"        -string "$HOME/Desktop"
-    defaults write com.apple.screencapture "type"            -string "png"
-    defaults write com.apple.screencapture "disable-shadow"  -bool "true"
-    success "截圖設定已套用"
-
-    # ── 鍵盤 ──
-    defaults write NSGlobalDomain "KeyRepeat"           -int "2"
-    defaults write NSGlobalDomain "InitialKeyRepeat"    -int "15"
-    defaults write NSGlobalDomain "ApplePressAndHoldEnabled" -bool "false"
-    success "鍵盤設定已套用"
-
-    # ── 觸控板 ──
-    defaults write com.apple.AppleMultitouchTrackpad "Clicking" -bool "true"
-    defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad "Clicking" -bool "true"
-    success "觸控板設定已套用（Tap to Click）"
-
-    # ── 其他 ──
-    defaults write NSGlobalDomain "NSDocumentSaveNewDocumentsToCloud" -bool "false"  # 預設存本機
-    defaults write com.apple.TextEdit "RichText" -bool "false"  # TextEdit 預設純文字
-    success "其他設定已套用"
-
-    warn "部分設定需要登出或重新開機才會生效"
-  fi
+warn "會以備份取代對應偏好 domain；備份中的舊使用者絕對路徑可能需要手動調整。"
+if confirm "從備份還原 macOS / App 偏好設定？"; then
+  for domain in "${DEFAULTS_DOMAINS[@]}"; do
+    filename="${domain//./_}"
+    plist="$MIGRATION_DIR/defaults/$filename.plist"
+    if [ ! -f "$plist" ]; then
+      plist="$MIGRATION_DIR/defaults/$filename.txt"
+      if [ "$domain" = com.apple.Terminal ] && [ ! -f "$plist" ]; then
+        plist="$MIGRATION_DIR/defaults/com_apple_terminal.txt"
+      fi
+    fi
+    [ -f "$plist" ] || continue
+    if ! plutil -lint "$plist" >/dev/null 2>&1; then
+      warn "略過無法解析的舊備份或損壞 plist: $plist"
+      continue
+    fi
+    if [ "$DRY_RUN" = true ]; then
+      dryrun "會從備份匯入偏好設定: $domain <= $plist"
+    else
+      if ! defaults import "$domain" "$plist"; then
+        warn "匯入失敗，略過並繼續其他項目: ${domain}（請檢查權限或 domain 是否被鎖定）"
+        continue
+      fi
+      case "$domain" in
+        com.apple.dock) killall Dock 2>/dev/null || true ;;
+        com.apple.finder) killall Finder 2>/dev/null || true ;;
+      esac
+      success "已匯入: $domain"
+    fi
+  done
+  info "部分設定需重新開啟 App、登出或重新開機才會生效；未備份的 domain 不變更。"
 fi
 
 # ════════════════════════════════════════════
