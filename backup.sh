@@ -68,11 +68,22 @@ echo "║        Mac Migration — 舊機器匯出         ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
 
+# Fail before rotating the previous backup or creating new output.
+select_ai_data backup "$MIGRATION_DIR"
+select_ai_preferences backup "$MIGRATION_DIR"
+check_ai_processes "${AI_SELECTED_IDS[@]}" "${AI_PREFERENCE_IDS[@]}"
+PREFLIGHT_SOURCES=("${DEVELOPER_PATHS[@]}" "$HOME/.config" "$HOME/.ssh" "$HOME/.mackup.cfg")
+for name in .zshrc .zprofile .zshenv .bashrc .bash_profile .aliases .gitconfig .gitignore_global .gitignore .vimrc .editorconfig .curlrc .wgetrc .npmrc; do
+  PREFLIGHT_SOURCES+=("$HOME/$name")
+done
+integrity backup-preflight "$MIGRATION_DIR" "${PREFLIGHT_SOURCES[@]}"
+
 # ── 建立目錄結構 ───────────────────────────────────────────
 PREVIOUS_BACKUP_DIR=""
 archive_previous_backup
 info "建立 migration 目錄..."
 mkdir -p "$DOTFILES_DIR" "$DEFAULTS_DIR" "$SSH_DIR"
+printf 'mac-migration-v1\n' > "$MIGRATION_DIR/backup-format"
 
 # ════════════════════════════════════════════
 # 1. Homebrew
@@ -229,6 +240,11 @@ if [ -f "$HOME/.nvm/nvm.sh" ]; then
     >> "$VERSIONS_FILE"
   success "nvm 版本清單已記錄"
 fi
+
+# Detect applications reopened during the copy; unfinished v1 backups lack a manifest.
+check_ai_processes "${AI_SELECTED_IDS[@]}" "${AI_PREFERENCE_IDS[@]}"
+integrity create "$MIGRATION_DIR"
+integrity verify "$MIGRATION_DIR"
 
 # ════════════════════════════════════════════
 # 完成

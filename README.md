@@ -1,7 +1,7 @@
 # mac-migrate
 
 用 shell script 在換 Mac 時備份舊機器、還原到新機器。
-請將 `backup.sh`、`restore.sh`、`encrypt-backup.sh` 與共用的 `migration-common.sh` 放在一起（建議直接 clone 專案）。
+請將 `backup.sh`、`restore.sh`、`encrypt-backup.sh` 與共用的 `migration-common.sh`、`migration-ai.sh`、`migration-integrity.pl` 放在一起（建議直接 clone 專案）。
 
 ## 流程
 
@@ -47,7 +47,8 @@ bash encrypt-backup.sh /path/to/mac-migration
 並改名為 `mac-migration`，避免與目前備份衝突。
 
 會在備份資料夾旁產生 `mac-migration-YYYYMMDD-HHMMSS.dmg`，
-遇到同名檔案會加序號。映像檔為壓縮唯讀格式，內容與檔名需解鎖後才能讀取。
+遇到同名檔案會加序號。映像檔為 APFS（區分大小寫）的壓縮唯讀格式，需 macOS 10.13 或更新版本；內容與檔名需解鎖後才能讀取。
+APFS 保留 Unicode 檔名形式，避免 HFS+ 正規化檔名後與完整性清單不符。
 請在互動式終端機輸入非空密碼；密碼不會顯示，也不會存入命令列、環境變數或設定檔。
 請自行妥善保存密碼，遺失後無法透過這些 script 復原。
 
@@ -109,6 +110,7 @@ bash restore.sh --dry-run --migration-dir /path/to/mac-migration
 | `ssh/` | 預設 config / known_hosts；選擇完整備份時包含整個 `~/.ssh/` |
 | `defaults/` | 可匯入的 macOS／App 偏好 plist |
 | `versions.txt` | 各開發工具版本號紀錄 |
+| `backup-format` / `manifest.json` | v1 格式標記、完整相對路徑清單與 SHA-256／符號連結校驗資訊 |
 
 ## 還原內容
 
@@ -118,7 +120,8 @@ bash restore.sh --dry-run --migration-dir /path/to/mac-migration
 | Homebrew | 自動安裝，並從 Brewfile 還原所有套件 |
 | dotfiles | 自動複製回 `~/` |
 | `.config` | 合併還原至 `~/.config/`；覆蓋同名檔案，保留新機器其他檔案，亦相容舊版僅備份 gh 的格式 |
-| AI／編輯器資料 | 確認後還原完整副本，既有資料改名為 `.before-restore-*` 保留 |
+| AI 資料 | 預先校驗所有副本，批次替換；失敗反向回復，成功時仍保留 `.before-restore-*` 原資料 |
+| 編輯器資料 | 延續逐一目錄的完整副本還原與 `.before-restore-*` 保護，不納入 AI 交易 |
 | 編輯器擴充套件 | CLI 可用時，確認後依 ID／版本重新安裝 |
 | SSH config & keys | 完整備份可確認後合併還原；仍相容舊版 `id_*` 格式與產生新 key 的流程 |
 | macOS defaults | 確認後匯入備份中的偏好，不再套用寫死的預設值 |
@@ -134,6 +137,7 @@ bash restore.sh --dry-run --migration-dir /path/to/mac-migration
 | Codex | `~/.codex/`，或 `CODEX_HOME` 指定的位置：設定、skills、plugins、sessions 等本機資料 |
 | Claude Code | `~/.claude/`（可用 `CLAUDE_CONFIG_DIR` 指定）、`~/.claude.json` |
 | 共用 agents／skills | `~/.agents/` |
+| Codex 本機文件／工作資料 | `~/Documents/Codex/`，存在時整份備份與還原 |
 | 桌面 AI App | `~/Library/Application Support/` 下的 `Codex`、`com.openai.codex`、`Claude`、`com.openai.chat`（若存在）；另匯出對應偏好 domain |
 | VS Code／Insiders／Cursor／Windsurf | 各自 `Application Support` 的 `User/`，包含 settings、keybindings、snippets、profiles 和本機狀態；另存 VS Code／Cursor 的 `argv.json` |
 | JetBrains | `~/Library/Application Support/JetBrains/` |
@@ -143,13 +147,86 @@ bash restore.sh --dry-run --migration-dir /path/to/mac-migration
 目錄內部的符號連結保留為連結，外部目標不會自動收集；socket／device 等執行期物件不備份。
 使用者資料目錄中的歷史、plugins 與快取也可能包含在內，因此備份可能較大。
 
-**備份及還原前，請先關閉相關 AI App、CLI 與編輯器。** 正在寫入的資料庫無法保證一致性。
-還原時先準備副本，再把目的地原資料改名保留，以免舊資料庫的 WAL 等殘留檔案混進備份。
-`.before-restore-*` 是未加密的舊資料，請在確認完成後自行管理；失敗時保留的備份同樣需要妥善保管。
+**備份及還原前，請先關閉相關 AI App、CLI 與編輯器，並在整個流程中保持關閉。**
+備份開始前及結束複製後，會對存在的 AI 資料檢查對應程序；還原時則在任何寫入前，
+以及 AI 副本準備完成、正式替換前，再次檢查。相關 AI 偏好 domain 也會在匯入前檢查。
+不會自動關閉、終止或重啟 AI App。編輯器目前仍需使用者自行關閉。
 
-這些本機檔案不等於雲端聊天備份，也不包含 Keychain、App sandbox 的完整容器或專案目錄。
-登入狀態不保證可跨機搬移；仍可能需要重新登入。專案內的 `.claude/`、`AGENTS.md`、`.env` 等需另行備份。
+| 資料群組 | `pgrep -x` 精確程序名稱 |
+|---|---|
+| Codex、Documents/Codex、Codex 桌面資料 | `Codex`、`codex` |
+| Claude Code／Claude 桌面資料 | `Claude`、`claude` |
+| 共用 `.agents` | 上述 Codex 與 Claude 名稱 |
+| ChatGPT 桌面資料 | `ChatGPT` |
+
+桌面名稱對應 macOS App 的 executable 名稱；Claude CLI 使用 `claude`。
+不使用 `pgrep -f` 或廣泛字串匹配。只有 `pgrep` 回傳 `1`（找不到程序）才繼續；
+回傳 `0`、檢查工具不存在或其他錯誤都中止，並顯示原因。
+這是時間點檢查，不是鎖住 App 的機制；重新命名的 executable 或其他寫入程式不在偵測範圍。
+若正在 Codex／Claude 裡操作，請改到外部終端機，在關閉相關 App／CLI 後執行實際備份。
+
+Codex 本機資料、Claude Code、桌面 App 的設定／資料，**不等於 ChatGPT 或 Claude 雲端聊天匯出**。
+本流程不包含 Keychain、App sandbox 的完整容器，也不自動收集 `~/Programming` 或其他外部專案。
+`~/Documents/Codex` 本身包含的檔案會備份；其中連向外部專案的符號連結只保存連結，不追蹤目標。
+專案內的 `.claude/`、`AGENTS.md`、`.env` 等需另行備份。
+登入狀態及跨 App／CLI 版本相容性不保證，仍可能需要重新登入或手動調整。
+使用者名稱或專案位置改變後，資料內的絕對路徑及符號連結可能需要手動修正。
 編輯器 CLI 不可用時會提示並保留擴充套件清單；特定舊版本若下架，可能需手動改裝新版。
+
+## 完整性驗證與舊備份
+
+新備份保持原有 `dotfiles/`、`developer/`、`ssh/` 等結構，不新增 ZIP／tar.gz 流程：
+
+- 開始建立時寫入 `backup-format`（`mac-migration-v1`）。完成後才寫入 `manifest.json`。
+  有版本標記但沒有清單的中斷備份會被拒絕，不會當成可還原的舊備份。
+- 清單版本為 `1`，記錄每個相對路徑及物件類型；普通檔案使用 SHA-256，符號連結記錄連結目標。
+  隱藏檔與空目錄也涵蓋；路徑／連結目標以 Base64 編碼原始 bytes，支援空白、中文、換行與反斜線檔名。
+  不追蹤連結外部內容，不包含清單自身，避免循環校驗。
+- 還原前重算整份備份清單。缺檔、內容變更、額外檔案、連結目標變更、損壞清單或未知版本，
+  都會在 Homebrew、dotfiles 或 AI 目的地尚未改動前中止。必要的資料根節點不接受符號連結。
+- **SHA-256 用來偵測搬移損壞／意外變更，不提供來源認證**；不能防止攻擊者同時改寫資料及清單。
+  請只還原可信來源，也不要在完成後自行修改備份內容。
+- 完全沒有版本標記與清單的舊主流程備份仍可還原，但會明確顯示「未驗證檔案完整性」。
+  舊獨立腳本的 ZIP／tar.gz 不支援直接匯入；本專案不依賴 `chatgpt-backup`／`claude-backup` 資料夾。
+
+可先執行唯讀檢查：
+
+```bash
+/usr/bin/perl migration-integrity.pl verify /path/to/mac-migration
+bash restore.sh --dry-run --migration-dir /path/to/mac-migration
+```
+
+`--dry-run` 同樣會執行校驗、路徑及程序檢查，但不建立暫存副本、不改動目的地。
+掛載唯讀 DMG 後也能驗證。`hdiutil verify` 繼續檢查加密映像檔是否可解密且完整；
+`manifest.json` 檢查搬移後的檔案／連結，兩者各自保留用途。
+
+## AI 批次還原與救援
+
+AI 資料是否還原會在主流程寫入前詢問。接受後先準備所有存在的 AI 項目，
+並逐一比對來源與副本的檔案 SHA-256、目錄及連結目標。
+預備位置為 `${TMPDIR:-/tmp}/mac-migrate-ai.XXXXXX/`；輸出、暫存或目的地與來源重疊時會拒絕。
+同一批目的地也不能重疊（例如 `CODEX_HOME` 與 `CLAUDE_CONFIG_DIR` 指向同一目錄），
+且不能是家目錄本身、其祖先或符號連結根節點。
+
+正式替換前再次確認程序已關閉，才依序把原資料移至相鄰的 `.before-restore-時間戳`，再放入完整副本。
+AI 批次在 Homebrew 等步驟之前完成，避免把整個 macOS 遷移流程納入交易：
+
+- **全部成功**：保留每份 `.before-restore-*` 原資料並顯示位置，清除本批次暫存。
+- **任何一步失敗**：依反向順序移開已放入的副本並放回原資料；原本不存在的目的地恢復為不存在，
+  本批次新建的空父目錄也會移除。回復成功後仍以失敗狀態結束，不繼續遷移。
+- **回復也失敗**：不刪除救援目錄，列出目的地、原資料與暫存位置。
+  `journal.txt` 記錄路徑及原本是否存在（Bash `%q` 路徑表示法）；`staged/` 保存尚未放入的副本，
+  `rescue/` 保存回復時移開的副本，原資料仍在顯示的 `.before-restore-*` 位置或已放回目的地。
+  請保持 App 關閉，先複製這些位置到安全處，再依日誌人工確認和放回原資料。
+
+此保護只涵蓋本批 AI 資料。編輯器保留原有單目錄保護；Homebrew、SSH、系統偏好與整個遷移流程不回復。
+一般錯誤及可捕捉的 INT／TERM／HUP 會觸發回復；斷電、SIGKILL、檔案系統損壞不保證自動復原。
+不要同時執行多個還原，也不要在過程中修改來源／目的地。
+`.before-restore-*`、暫存與救援資料皆未加密，請確認完成後自行妥善管理。
+
+執行環境為 macOS 內建 Bash 3.2、`pgrep`、`rsync`、`hdiutil` 與 `/usr/bin/perl` 的核心模組
+（Digest::SHA、JSON::PP、MIME::Base64 等）；不需為這些新功能安裝 Python 或第三方套件。
+測試使用 Python 標準函式庫：`python3 -m unittest discover -s tests -v`，所有資料均為隔離假 HOME／暫存資料。
 
 ## SSH 與偏好設定還原
 

@@ -100,6 +100,30 @@ class EncryptionTests(unittest.TestCase):
             subprocess.run([HDIUTIL, 'detach', str(dest)], check=True, capture_output=True)
         self.assertFalse(list(self.root.glob('.mac-migration-encrypt.*')))
 
+    def test_dmg_preserves_integrity_manifest_and_special_names(self):
+        (self.source / 'dotfiles' / 'café 👩🏽\n.hidden').write_text('unicode fixture')
+        (self.source / 'dotfiles/link').symlink_to('missing\nexternal')
+        (self.source / 'backup-format').write_text('mac-migration-v1\n')
+        helper = SCRIPT.parent / 'migration-integrity.pl'
+        subprocess.run(['/usr/bin/perl', str(helper), 'create', str(self.source)],
+                       check=True, capture_output=True)
+        code, output = self.run_encryption()
+        self.assertEqual(code, 0, output)
+        archive, = self.root.glob('*.dmg')
+        dest = self.root / 'mounted'
+        dest.mkdir()
+        result = subprocess.run([HDIUTIL, 'attach', str(archive), '-stdinpass', '-readonly',
+                                 '-nobrowse', '-mountpoint', str(dest)],
+                                input=(PASSWORD + '\0').encode(), capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        try:
+            checked = subprocess.run(['/usr/bin/perl', str(helper), 'verify', str(dest)],
+                                     capture_output=True, text=True)
+            self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr + repr(
+                [str(p.relative_to(dest)) for p in dest.rglob('*')]))
+        finally:
+            subprocess.run([HDIUTIL, 'detach', str(dest)], check=True, capture_output=True)
+
     def test_delete_only_current_backup(self):
         previous = self.root / 'mac-migration-previous'
         previous.mkdir()

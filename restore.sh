@@ -148,6 +148,29 @@ if [ "$DRY_RUN" = true ]; then
   warn "Dry-run 模式：只顯示將執行的動作，不會安裝、複製、寫入或重啟系統服務"
 fi
 
+# Verify all data before Homebrew, dotfiles, or any destination can be changed.
+integrity verify "$MIGRATION_DIR"
+select_ai_data restore "$MIGRATION_DIR"
+integrity structure "$MIGRATION_DIR" "${DEVELOPER_IDS[@]}"
+select_ai_preferences restore "$MIGRATION_DIR"
+check_ai_processes "${AI_PREFERENCE_IDS[@]}"
+RESTORE_DEVELOPER=false
+if [ -d "$MIGRATION_DIR/developer" ]; then
+  warn "還原 AI 工具與編輯器前請先關閉相關 App / CLI；原資料會改名保留。"
+  if confirm "還原 AI 工具與編輯器使用者資料？"; then
+    RESTORE_DEVELOPER=true
+    check_ai_processes "${AI_SELECTED_IDS[@]}"
+    integrity destinations "$MIGRATION_DIR" "$HOME" "${AI_DESTINATIONS[@]}"
+    if [ "$DRY_RUN" = true ]; then
+      for index in "${AI_INDICES[@]}"; do
+        dryrun "會還原完整資料（AI 批次、預備校驗與失敗回復）: ${DEVELOPER_PATHS[$index]}"
+      done
+    else
+      restore_ai_batch "$MIGRATION_DIR"
+    fi
+  fi
+fi
+
 # ════════════════════════════════════════════
 # 1. Xcode Command Line Tools
 # ════════════════════════════════════════════
@@ -258,18 +281,16 @@ fi
 # 還原的 .zprofile 可能覆蓋步驟 2 的設定，需再確保一次。
 ensure_homebrew_shellenv
 
-# AI / 編輯器可能含資料庫；還原前須關閉相關程式。
-if [ -d "$MIGRATION_DIR/developer" ]; then
-  warn "還原 AI 工具與編輯器前請先關閉相關 App / CLI；原資料會改名保留，再套用備份。"
-  if confirm "還原 AI 工具與編輯器使用者資料？"; then
-    for index in "${!DEVELOPER_IDS[@]}"; do
-      src="$MIGRATION_DIR/developer/${DEVELOPER_IDS[$index]}"
-      dest="${DEVELOPER_PATHS[$index]}"
-      if [ -d "$src" ] || [ -f "$src" ]; then
-        run_or_dry "會還原完整資料（既有資料另存 .before-restore-*）: $dest <= $src" restore_snapshot "$src" "$dest"
-      fi
-    done
-  fi
+# Editors keep their existing per-directory snapshot protection, outside the AI batch.
+if [ "$RESTORE_DEVELOPER" = true ]; then
+  for index in "${!DEVELOPER_IDS[@]}"; do
+    is_ai_id "${DEVELOPER_IDS[$index]}" && continue
+    src="$MIGRATION_DIR/developer/${DEVELOPER_IDS[$index]}"
+    dest="${DEVELOPER_PATHS[$index]}"
+    if [ -d "$src" ] || [ -f "$src" ]; then
+      run_or_dry "會還原完整資料（既有資料另存 .before-restore-*）: $dest <= $src" restore_snapshot "$src" "$dest"
+    fi
+  done
 fi
 for editor in "${EDITOR_COMMANDS[@]}"; do
   list="$MIGRATION_DIR/extensions/$editor.txt"
@@ -411,6 +432,7 @@ echo ""
 
 warn "會以備份取代對應偏好 domain；備份中的舊使用者絕對路徑可能需要手動調整。"
 if confirm "從備份還原 macOS / App 偏好設定？"; then
+  check_ai_processes "${AI_PREFERENCE_IDS[@]}"
   for domain in "${DEFAULTS_DOMAINS[@]}"; do
     filename="${domain//./_}"
     plist="$MIGRATION_DIR/defaults/$filename.plist"

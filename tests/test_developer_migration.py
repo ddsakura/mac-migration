@@ -32,7 +32,9 @@ name = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
 with open(os.environ['FIXTURE_LOG'], 'a') as f:
     f.write(json.dumps([name] + args) + '\\n')
-if name == 'defaults':
+if name == 'pgrep':
+    sys.exit(int(os.environ.get('FIXTURE_PGREP_STATUS', '1')))
+elif name == 'defaults':
     if args[0] == 'export':
         if args[1] in ('com.apple.dock', 'NSGlobalDomain', 'com.openai.chat'):
             sys.stdout.buffer.write(plistlib.dumps({{'autohide': False, 'tilesize': 73}}))
@@ -47,7 +49,7 @@ elif name == 'code' and '--list-extensions' in args:
     print('publisher.extension@1.2.3')
 ''')
         stub.chmod(0o700)
-        for name in ('defaults', 'brew', 'xcode-select', 'code', 'killall', 'sw_vers',
+        for name in ('pgrep', 'defaults', 'brew', 'xcode-select', 'code', 'killall', 'sw_vers',
                      'xcodebuild', 'node', 'npm', 'ruby', 'python3', 'java', 'go', 'rustc', 'swift'):
             (self.bin / name).symlink_to(stub)
 
@@ -107,6 +109,7 @@ elif name == 'code' and '--list-extensions' in args:
         self.assertEqual((migration / 'extensions/code.txt').read_text(), 'publisher.extension@1.2.3\n')
         # Extension installation has a separate preview test; don't run any host editor.
         shutil.rmtree(migration / 'extensions')
+        subprocess.run(['/usr/bin/perl', str(REPO / 'migration-integrity.pl'), 'create', str(migration)], check=True, capture_output=True)
         self.write(self.new, 'custom-codex/state.sqlite-wal', 'stale WAL\n')
         self.write(self.new, '.ssh/local-only', 'keep\n')
         self.restore(migration)
@@ -192,6 +195,7 @@ elif name == 'code' and '--list-extensions' in args:
         self.populate()
         migration = self.backup()
         shutil.rmtree(migration / 'extensions')
+        subprocess.run(['/usr/bin/perl', str(REPO / 'migration-integrity.pl'), 'create', str(migration)], check=True, capture_output=True)
         result = self.restore(migration, answers='n\nn\nn\n')
         for item in ('config', 'known_hosts'):
             self.assertEqual((self.new / '.ssh' / item).read_text(),
@@ -205,6 +209,7 @@ elif name == 'code' and '--list-extensions' in args:
         self.populate()
         migration = self.backup()
         shutil.rmtree(migration / 'extensions')
+        subprocess.run(['/usr/bin/perl', str(REPO / 'migration-integrity.pl'), 'create', str(migration)], check=True, capture_output=True)
         self.restore(migration, answers='\n')
         self.assertFalse((self.new / 'custom-codex').exists())
         self.assertTrue((self.new / '.ssh/config').exists())
