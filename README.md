@@ -1,6 +1,7 @@
 # mac-migrate
 
-兩支 shell script，讓你在換 Mac 時快速備份舊機器、還原到新機器。
+用 shell script 在換 Mac 時備份舊機器、還原到新機器。
+請將 `backup.sh`、`restore.sh`、`encrypt-backup.sh` 與共用的 `migration-common.sh` 放在一起（建議直接 clone 專案）。
 
 ## 流程
 
@@ -103,8 +104,10 @@ bash restore.sh --dry-run --migration-dir /path/to/mac-migration
 | `dotfiles/` | `.zshrc` / `.gitconfig` / `.npmrc` 等 shell & 工具設定 |
 | `dotfiles/.config/` | 整個 `~/.config/`，含 Starship、GitHub CLI、其他工具的設定與隱藏檔 |
 | `mackup.cfg` | mackup storage 設定（供 `--config-file` 使用） |
-| `ssh/config` | SSH host 設定（private key 選擇性備份） |
-| `defaults/` | macOS 系統偏好設定（純文字，供參考） |
+| `developer/` | AI 工具與編輯器使用者資料（詳見下方範圍） |
+| `extensions/` | VS Code 系列預設 profile 的擴充套件 ID 與版本清單 |
+| `ssh/` | 預設 config / known_hosts；選擇完整備份時包含整個 `~/.ssh/` |
+| `defaults/` | 可匯入的 macOS／App 偏好 plist |
 | `versions.txt` | 各開發工具版本號紀錄 |
 
 ## 還原內容
@@ -115,10 +118,55 @@ bash restore.sh --dry-run --migration-dir /path/to/mac-migration
 | Homebrew | 自動安裝，並從 Brewfile 還原所有套件 |
 | dotfiles | 自動複製回 `~/` |
 | `.config` | 合併還原至 `~/.config/`；覆蓋同名檔案，保留新機器其他檔案，亦相容舊版僅備份 gh 的格式 |
-| SSH config & keys | 自動還原，或產生新的 ed25519 key |
-| macOS defaults | 套用 Dock / Finder / 鍵盤 / 觸控板等偏好設定 |
+| AI／編輯器資料 | 確認後還原完整副本，既有資料改名為 `.before-restore-*` 保留 |
+| 編輯器擴充套件 | CLI 可用時，確認後依 ID／版本重新安裝 |
+| SSH config & keys | 完整備份可確認後合併還原；仍相容舊版 `id_*` 格式與產生新 key 的流程 |
+| macOS defaults | 確認後匯入備份中的偏好，不再套用寫死的預設值 |
 | nvm / Node | 安裝 nvm，提示安裝舊機器相同版本 |
 | mackup restore | 還原 app 設定（需 storage 同步完成） |
+
+## AI 工具與編輯器範圍
+
+只備份存在的路徑，未安裝的工具會跳過。備份與還原使用同一份路徑清單：
+
+| 類別 | 內容／路徑 |
+|---|---|
+| Codex | `~/.codex/`，或 `CODEX_HOME` 指定的位置：設定、skills、plugins、sessions 等本機資料 |
+| Claude Code | `~/.claude/`（可用 `CLAUDE_CONFIG_DIR` 指定）、`~/.claude.json` |
+| 共用 agents／skills | `~/.agents/` |
+| 桌面 AI App | `~/Library/Application Support/` 下的 `Codex`、`com.openai.codex`、`Claude`、`com.openai.chat`（若存在）；另匯出對應偏好 domain |
+| VS Code／Insiders／Cursor／Windsurf | 各自 `Application Support` 的 `User/`，包含 settings、keybindings、snippets、profiles 和本機狀態；另存 VS Code／Cursor 的 `argv.json` |
+| JetBrains | `~/Library/Application Support/JetBrains/` |
+| Vim／Emacs | 原有 `.vimrc`，加上 `.vim/`、`.gvimrc`、`.ideavimrc`、`.emacs`、`.emacs.d/`；Neovim 設定已由 `.config/` 涵蓋 |
+
+`CODEX_HOME`／`CLAUDE_CONFIG_DIR` 請使用絕對路徑；新機器還原時，以新機器上的環境變數或預設路徑為準。
+目錄內部的符號連結保留為連結，外部目標不會自動收集；socket／device 等執行期物件不備份。
+使用者資料目錄中的歷史、plugins 與快取也可能包含在內，因此備份可能較大。
+
+**備份及還原前，請先關閉相關 AI App、CLI 與編輯器。** 正在寫入的資料庫無法保證一致性。
+還原時先準備副本，再把目的地原資料改名保留，以免舊資料庫的 WAL 等殘留檔案混進備份。
+`.before-restore-*` 是未加密的舊資料，請在確認完成後自行管理；失敗時保留的備份同樣需要妥善保管。
+
+這些本機檔案不等於雲端聊天備份，也不包含 Keychain、App sandbox 的完整容器或專案目錄。
+登入狀態不保證可跨機搬移；仍可能需要重新登入。專案內的 `.claude/`、`AGENTS.md`、`.env` 等需另行備份。
+編輯器 CLI 不可用時會提示並保留擴充套件清單；特定舊版本若下架，可能需手動改裝新版。
+
+## SSH 與偏好設定還原
+
+還原流程的確認問題請輸入 `y`／`yes` 再按 Enter 才會執行；直接 Enter、`n` 或輸入結束皆視為否。
+Dry-run 仍預覽所有確認為「是」的分支，不執行變更。
+
+- 選擇完整 SSH 備份後，包含自訂名稱的金鑰、`config.d/`、`authorized_keys`、公鑰及隱藏檔。
+  還原後目錄權限為 `700`、一般檔案為 `600`，不追蹤符號連結修改外部權限。
+  新機器原有、不與備份同名的 SSH 檔案會保留。
+- 拒絕完整 SSH 還原時，仍還原 `config`／`known_hosts` 並明確提示略過私鑰及其他檔案；與舊版備份行為一致。
+- 拒絕完整備份時只保存 `config` 與 `known_hosts`，不自動猜測哪些額外檔案可安全帶走。
+  `Include`／`IdentityFile` 若指向 `~/.ssh/` 以外（或外部符號連結目標），需另外備份。
+- 偏好包含 Dock、Finder、截圖、Terminal、Safari、TextEdit、全域鍵盤設定、觸控板、iTerm2 及上述 AI App domain。
+  匯入會取代該 domain 的偏好，未備份的 domain 不變更。只有成功匯入 Dock／Finder 後才重啟它們。
+- 舊 `defaults/*.txt` 若可解析為 plist，也可匯入；無法解析或損壞的檔案會提示並跳過，不會套用預設值替代。
+  舊帳號的絕對路徑（例如截圖位置）與機器特定設定不會自動改寫，換機後可能需調整。
+- `.curlrc`、`.wgetrc` 現在會與其他 dotfiles 一起還原。Shell 設定只複製，不在 Bash 還原程序中執行；請另開終端機載入。
 
 ## 注意事項
 

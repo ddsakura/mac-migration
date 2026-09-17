@@ -35,7 +35,7 @@ class ConfigRestoreTests(unittest.TestCase):
             args.append('--dry-run')
         result = subprocess.run(args, env={**os.environ, 'HOME': str(self.home),
                                 'PATH': f'{self.bin}:/usr/bin:/bin'},
-                                input='nnnn', text=True, capture_output=True, timeout=20)
+                                input='n\nn\nn\nn\n', text=True, capture_output=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
 

@@ -10,6 +10,7 @@ set -e
 trap 'exit 1' ERR
 umask 077
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/migration-common.sh"
 
 MIGRATION_DIR="$(pwd)/mac-migration"
 DOTFILES_DIR="$MIGRATION_DIR/dotfiles"
@@ -125,47 +126,63 @@ fi
 # Mackup
 copy_if_exists "$HOME/.mackup.cfg"      "$MIGRATION_DIR/mackup.cfg"
 
-# ════════════════════════════════════════════
-# 3. SSH config（不含 private key）
-# ════════════════════════════════════════════
+# AI 工具與編輯器：整份使用者資料，包含設定、skills 與本機紀錄。
 echo ""
-echo "── 3. SSH config ───────────────────────────"
-copy_if_exists "$HOME/.ssh/config"  "$SSH_DIR/config"
-
-# 是否要備份 private key（問使用者）
-echo ""
-read -p "  是否備份 SSH private keys？(建議放加密外接碟，不建議 iCloud) [y/N] " -n 1 -r
-echo ""
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-  warn "即將備份 SSH private keys，請確保 migration 資料夾安全存放"
-  if [ -d "$HOME/.ssh" ]; then
-    cp "$HOME/.ssh"/id_* "$SSH_DIR/" 2>/dev/null && success "SSH keys 已備份" || skip "找不到 SSH keys"
+echo "── AI 工具與編輯器 ─────────────────────────"
+warn "請先關閉 AI App、CLI 與編輯器，再備份；執行中的資料庫無法保證一致性。"
+mkdir -p "$MIGRATION_DIR/developer" "$MIGRATION_DIR/extensions"
+for index in "${!DEVELOPER_IDS[@]}"; do
+  src="${DEVELOPER_PATHS[$index]}"
+  dest="$MIGRATION_DIR/developer/${DEVELOPER_IDS[$index]}"
+  if [ -d "$src" ]; then
+    copy_tree "$src" "$dest"
+    success "已備份: $src"
+  elif [ -f "$src" ]; then
+    cp -p "$src" "$dest"
+    success "已備份: $src"
   fi
+done
+for editor in "${EDITOR_COMMANDS[@]}"; do
+  if command -v "$editor" >/dev/null 2>&1; then
+    list="$MIGRATION_DIR/extensions/$editor.txt"
+    if "$editor" --list-extensions --show-versions > "$list.tmp"; then
+      mv "$list.tmp" "$list"
+    else
+      rm -f "$list.tmp"
+      warn "無法匯出 $editor 擴充套件清單"
+    fi
+  fi
+done
+
+# 完整 SSH 為 opt-in，避免將不明名稱的私鑰在使用者拒絕時一併帶走。
+echo ""
+echo "── 3. SSH ──────────────────────────────────"
+copy_if_exists "$HOME/.ssh/config" "$SSH_DIR/config"
+copy_if_exists "$HOME/.ssh/known_hosts" "$SSH_DIR/known_hosts"
+IFS= read -r -p "  是否完整備份 ~/.ssh（含所有名稱的私鑰、Include 子目錄）？[y/N] " REPLY || REPLY=""
+echo ""
+if [[ $REPLY =~ ^[Yy]$ ]] && [ -d "$HOME/.ssh" ]; then
+  copy_tree "$HOME/.ssh" "$SSH_DIR"
+  printf 'full-v1\n' > "$MIGRATION_DIR/ssh-format"
+  success "已完整備份 ~/.ssh（不含 socket；符號連結外部目標需另備份）"
 else
-  skip "略過 SSH private keys（建議在新機器重新產生）"
+  skip "只備份 SSH config 與 known_hosts；未收集私鑰或額外 Include 檔案"
 fi
 
-# ════════════════════════════════════════════
-# 4. macOS defaults 匯出
-# ════════════════════════════════════════════
+# 可還原的 plist；不再只保存 defaults read 的人類閱讀輸出。
 echo ""
 echo "── 4. macOS defaults ───────────────────────"
-
-DOMAINS=(
-  "com.apple.dock"
-  "com.apple.finder"
-  "com.apple.screencapture"
-  "com.apple.terminal"
-  "com.apple.Safari"
-  "com.apple.TextEdit"
-  "NSGlobalDomain"
-)
-
-for domain in "${DOMAINS[@]}"; do
-  filename=$(echo "$domain" | tr '.' '_')
-  defaults read "$domain" > "$DEFAULTS_DIR/${filename}.txt" 2>/dev/null \
-    && success "匯出: $domain" \
-    || warn "無法讀取: $domain"
+for domain in "${DEFAULTS_DOMAINS[@]}"; do
+  filename="${domain//./_}"
+  target="$DEFAULTS_DIR/$filename.plist"
+  if defaults export "$domain" - > "$target.tmp" 2>/dev/null &&
+      plutil -lint "$target.tmp" >/dev/null 2>&1; then
+    mv "$target.tmp" "$target"
+    success "匯出: $domain"
+  else
+    rm -f "$target.tmp"
+    warn "無法匯出: ${domain}（不存在或無讀取權限）"
+  fi
 done
 
 # ════════════════════════════════════════════
