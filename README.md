@@ -164,6 +164,7 @@ Dry-run 仍預覽所有確認為「是」的分支，不執行變更。
   `Include`／`IdentityFile` 若指向 `~/.ssh/` 以外（或外部符號連結目標），需另外備份。
 - 偏好包含 Dock、Finder、截圖、Terminal、Safari、TextEdit、全域鍵盤設定、觸控板、iTerm2 及上述 AI App domain。
   匯入會取代該 domain 的偏好，未備份的 domain 不變更。只有成功匯入 Dock／Finder 後才重啟它們。
+  若單一 domain 匯入失敗（例如權限不足），會提示並繼續其他還原項目，不重啟該 domain 的 App；失敗項目需之後重試。
 - 舊 `defaults/*.txt` 若可解析為 plist，也可匯入；無法解析或損壞的檔案會提示並跳過，不會套用預設值替代。
   舊帳號的絕對路徑（例如截圖位置）與機器特定設定不會自動改寫，換機後可能需調整。
 - `.curlrc`、`.wgetrc` 現在會與其他 dotfiles 一起還原。Shell 設定只複製，不在 Bash 還原程序中執行；請另開終端機載入。

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -38,6 +39,8 @@ if name == 'defaults':
         else:
             sys.exit(1)
     elif args[0] == 'import':
+        if args[1] == os.environ.get('FIXTURE_FAIL_DOMAIN'):
+            sys.exit(1)
         data = subprocess.check_output(['/usr/bin/plutil', '-convert', 'xml1', '-o', '-', args[2]])
         plistlib.loads(data)
 elif name == 'code' and '--list-extensions' in args:
@@ -207,3 +210,26 @@ elif name == 'code' and '--list-extensions' in args:
         self.assertTrue((self.new / '.ssh/config').exists())
         self.assertFalse((self.new / '.ssh/keys').exists())
         self.assertNotIn('["defaults", "import"', self.log.read_text())
+
+    def test_failed_defaults_import_continues_without_restarting_failed_domain(self):
+        migration = self.root / 'mac-migration'
+        (migration / 'defaults').mkdir(parents=True)
+        (migration / 'ssh').mkdir()
+        for domain in ('com.apple.dock', 'com.apple.finder', 'NSGlobalDomain'):
+            target = migration / 'defaults' / (domain.replace('.', '_') + '.plist')
+            target.write_bytes(plistlib.dumps({'fixture': True}))
+        for failed, failed_process, other_process in (
+            ('com.apple.dock', 'Dock', 'Finder'),
+            ('com.apple.finder', 'Finder', 'Dock'),
+        ):
+            with self.subTest(domain=failed):
+                self.log.write_text('')
+                with patch.dict(os.environ, {'FIXTURE_FAIL_DOMAIN': failed}):
+                    result = self.restore(migration, answers='n\ny\n')
+                log = self.log.read_text()
+                self.assertIn('匯入失敗，略過並繼續其他項目: ' + failed, result.stdout)
+                self.assertNotIn('已匯入: ' + failed, result.stdout)
+                self.assertNotIn('["killall", "' + failed_process + '"]', log)
+                self.assertIn('["killall", "' + other_process + '"]', log)
+                self.assertIn('["defaults", "import", "NSGlobalDomain"', log)
+                self.assertIn('7. 開發工具', result.stdout)

@@ -428,7 +428,10 @@ if confirm "從備份還原 macOS / App 偏好設定？"; then
     if [ "$DRY_RUN" = true ]; then
       dryrun "會從備份匯入偏好設定: $domain <= $plist"
     else
-      defaults import "$domain" "$plist"
+      if ! defaults import "$domain" "$plist"; then
+        warn "匯入失敗，略過並繼續其他項目: ${domain}（請檢查權限或 domain 是否被鎖定）"
+        continue
+      fi
       case "$domain" in
         com.apple.dock) killall Dock 2>/dev/null || true ;;
         com.apple.finder) killall Finder 2>/dev/null || true ;;
