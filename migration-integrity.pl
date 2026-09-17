@@ -54,12 +54,14 @@ sub inventory {
             sysopen(my $fh, $path, O_RDONLY | O_NOFOLLOW) or fail("cannot read file: " . b64($path));
             binmode $fh;
             my @opened = stat($fh);
-            fail('file changed during verification') unless $opened[0] == $st[0] && $opened[1] == $st[1];
+            fail('file changed during verification (relative path base64): ' . b64($relative))
+                unless $opened[0] == $st[0] && $opened[1] == $st[1];
             $entry->{type} = 'file';
             $entry->{sha256} = Digest::SHA->new(256)->addfile($fh)->hexdigest;
             my @after = stat($fh);
             close $fh or fail('read close failed');
-            fail('file changed during verification') unless $after[7] == $st[7] && $after[9] == $st[9];
+            fail('file changed during verification (relative path base64): ' . b64($relative))
+                unless $after[7] == $st[7] && $after[9] == $st[9];
         } else { return if $skip_special; fail('unsupported file type: ' . b64($path)); }
         push @entries, $entry;
         if ($entry->{type} eq 'directory') {
