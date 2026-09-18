@@ -133,6 +133,39 @@ class EncryptionTests(unittest.TestCase):
         self.assertTrue(previous.exists())
         self.assertEqual(len(list(self.root.glob('*.dmg'))), 1)
 
+    def test_diskutil_rejects_case_collisions_on_sensitive_source(self):
+        image = self.root / 'case-source.sparsebundle'
+        subprocess.run([HDIUTIL, 'create', '-size', '128m', '-type', 'SPARSEBUNDLE',
+                        '-fs', 'Case-sensitive APFS', '-volname', 'case-fixture', str(image)],
+                       check=True, capture_output=True, timeout=30)
+        mount = self.root / 'case-mount'
+        mount.mkdir()
+        subprocess.run([HDIUTIL, 'attach', str(image), '-nobrowse', '-mountpoint', str(mount)],
+                       check=True, capture_output=True, timeout=30)
+        try:
+            source = mount / 'mac-migration'
+            for name in ('dotfiles', 'ssh', 'defaults'):
+                (source / name).mkdir(parents=True)
+            (source / 'dotfiles/File.txt').write_text('upper')
+            (source / 'dotfiles/file.txt').write_text('lower')
+            fake_bin = self.root / 'bin'
+            fake_bin.mkdir()
+            stub = fake_bin / 'diskutil'
+            stub.write_text('#!/bin/sh\ncase "$*" in *--help) exit 0;; esac\necho unexpected-create\nexit 2\n')
+            stub.chmod(0o700)
+            with patch.dict(os.environ, {'PATH': str(fake_bin) + ':' + os.environ['PATH']}):
+                code, output = interact(source, [])
+            self.assertNotEqual(code, 0, output)
+            self.assertIn('檔名衝突', output)
+            self.assertNotIn('unexpected-create', output)
+            self.assertNotIn('設定備份密碼:', output)
+            self.assertEqual((source / 'dotfiles/File.txt').read_text(), 'upper')
+            self.assertEqual((source / 'dotfiles/file.txt').read_text(), 'lower')
+            self.assertFalse(list(mount.glob('*.dmg')))
+            self.assertFalse(list(mount.glob('.mac-migration-encrypt.*')))
+        finally:
+            subprocess.run([HDIUTIL, 'detach', str(mount)], check=True, capture_output=True, timeout=30)
+
     def test_wrong_verification_keeps_source(self):
         code, output = self.run_encryption(verify='wrong')
         self.assertNotEqual(code, 0, output)
@@ -157,14 +190,34 @@ class EncryptionTests(unittest.TestCase):
         fake_bin = self.root / 'bin'
         fake_bin.mkdir()
         fake = fake_bin / 'hdiutil'
-        fake.write_text('#!/bin/sh\nexit 2\n')
+        fake.write_text('#!/bin/sh\necho unexpected-hdiutil-call\nexit 2\n')
         fake.chmod(0o700)
+        diskutil = fake_bin / 'diskutil'
+        diskutil.write_text('#!/bin/sh\ncase "$*" in *--help) exit 0;; esac\nexit 2\n')
+        diskutil.chmod(0o700)
         with patch.dict(os.environ, {'PATH': str(fake_bin) + ':' + os.environ['PATH']}):
             code, output = interact(self.source, [('設定備份密碼:', PASSWORD)])
         self.assertNotEqual(code, 0, output)
+        self.assertIn('使用 diskutil image create', output)
+        self.assertNotIn('unexpected-hdiutil-call', output)
         self.assertTrue(self.source.exists())
         self.assertFalse(list(self.root.glob('*.dmg')))
         self.assertFalse(list(self.root.glob('.mac-migration-encrypt.*')))
+
+    def test_unsupported_diskutil_uses_legacy_creation(self):
+        fake_bin = self.root / 'bin'
+        fake_bin.mkdir()
+        diskutil = fake_bin / 'diskutil'
+        diskutil.write_text('#!/bin/sh\nexit 1\n')
+        diskutil.chmod(0o700)
+        with patch.dict(os.environ, {'PATH': str(fake_bin) + ':' + os.environ['PATH']}):
+            code, output = self.run_encryption()
+        self.assertEqual(code, 0, output)
+        self.assertIn('hdiutil 相容模式', output)
+        archive, = self.root.glob('*.dmg')
+        verified = subprocess.run([HDIUTIL, 'verify', str(archive), '-stdinpass', '-nocache'],
+                                  input=(PASSWORD + '\0').encode(), capture_output=True, timeout=30)
+        self.assertEqual(verified.returncode, 0, verified.stderr)
 
 
 if __name__ == '__main__':

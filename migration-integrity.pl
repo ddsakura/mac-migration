@@ -9,6 +9,9 @@ use Fcntl qw(:mode :DEFAULT);
 use Digest::SHA;
 use MIME::Base64 qw(encode_base64);
 use JSON::PP;
+use Encode qw(decode FB_CROAK);
+use Unicode::Normalize qw(NFD);
+use feature 'fc';
 
 my $json = JSON::PP->new->canonical->ascii;
 my $manifest = 'manifest.json';
@@ -128,6 +131,28 @@ if ($command eq 'create' || $command eq 'verify') {
             unless $json->encode($data->{entries}) eq $json->encode(inventory($root, 1));
         print "SHA-256／符號連結校驗通過。\n";
     }
+} elsif ($command eq 'case-safe') {
+    # Conservative Unicode comparison; inspect sibling names without following links.
+    my $walk;
+    $walk = sub {
+        my ($directory) = @_;
+        opendir(my $dh, $directory) or fail('cannot enumerate: ' . b64($directory));
+        my @names = grep { $_ ne '.' && $_ ne '..' } readdir($dh);
+        closedir $dh;
+        my %seen;
+        for my $name (@names) {
+            my $bytes = $name;
+            my $decoded = eval { decode('UTF-8', $bytes, FB_CROAK) };
+            fail('cannot safely compare filename (base64): ' . b64("$directory/$name")) unless defined $decoded;
+            my $key = NFD(fc(NFD($decoded)));
+            fail('大小寫／Unicode 檔名衝突；diskutil 無法安全封裝 (paths base64): '
+                 . b64("$directory/$seen{$key}") . ' / ' . b64("$directory/$name")) if exists $seen{$key};
+            $seen{$key} = $name;
+            my $path = "$directory/$name";
+            $walk->($path) if !-l $path && -d $path;
+        }
+    };
+    $walk->($args[0]);
 } elsif ($command eq 'compare') {
     fail('staged copy differs from source') unless
         $json->encode(inventory($args[0], 0, 1)) eq $json->encode(inventory($args[1], 0, 1));
