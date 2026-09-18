@@ -57,6 +57,13 @@ bash "/你的專案路徑/mac-migrate/backup.sh"
 ### 可選：密碼加密備份
 
 使用 macOS 內建工具建立 AES-256 加密 `.dmg`，新舊 Mac 都不需額外安裝 App。
+優先使用 `diskutil image create from`；系統未提供可用的子指令時才使用 `hdiutil create`。
+若 diskutil 建立映像失敗，會保留明文並回傳失敗，不會自動改用舊指令重試。
+建立後仍使用 `hdiutil verify` 驗證映像；此次替換的是已棄用的建立指令。
+diskutil 產生的 APFS 映像不區分大小寫。建立前會檢查同目錄內的檔名，
+若有大小寫或 Unicode 正規化衝突（例如 `File.txt` 與 `file.txt`），會中止並保留明文，
+不會自動改用舊指令。檢查採保守的 Unicode 比對，也不追蹤符號連結外部目標。
+舊系統的 hdiutil 相容模式仍使用區分大小寫的 APFS。封裝期間請勿修改備份資料夾。
 
 `backup.sh` 完成後會詢問是否加密，預設不加密。
 也可以在專案目錄執行以下指令，加密既有備份：
@@ -70,7 +77,7 @@ bash encrypt-backup.sh /path/to/mac-migration
 並改名為 `mac-migration`，避免與目前備份衝突。
 
 會在備份資料夾旁產生 `mac-migration-YYYYMMDD-HHMMSS.dmg`，
-遇到同名檔案會加序號。映像檔為 APFS（區分大小寫）的壓縮唯讀格式，需 macOS 10.13 或更新版本；內容與檔名需解鎖後才能讀取。
+遇到同名檔案會加序號。映像檔為 APFS 的壓縮唯讀格式（UDZO），需 macOS 10.13 或更新版本；內容與檔名需解鎖後才能讀取。
 APFS 保留 Unicode 檔名形式，避免 HFS+ 正規化檔名後與完整性清單不符。
 請在互動式終端機輸入非空密碼；密碼不會顯示，也不會存入命令列、環境變數或設定檔。
 請自行妥善保存密碼，遺失後無法透過這些 script 復原。

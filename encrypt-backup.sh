@@ -30,6 +30,33 @@ if ! command -v hdiutil >/dev/null 2>&1; then
   exit 1
 fi
 
+# Probe the subcommand, rather than guessing support from the macOS version.
+USE_DISKUTIL=false
+if command -v diskutil >/dev/null 2>&1 &&
+    diskutil image create from --help >/dev/null 2>&1; then
+  USE_DISKUTIL=true
+fi
+
+if [ "$USE_DISKUTIL" = true ]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if ! /usr/bin/perl "$SCRIPT_DIR/migration-integrity.pl" case-safe "$SOURCE_DIR"; then
+    echo "無法安全使用不區分大小寫的 diskutil 映像；已中止，明文備份已保留。" >&2
+    exit 1
+  fi
+fi
+
+create_encrypted_image() {
+  if [ "$USE_DISKUTIL" = true ]; then
+    printf '%s\0' "$BACKUP_PASSWORD" | diskutil image create from \
+      --volumeName mac-migration --format UDZO --encrypt --stdinpassphrase \
+      "$SOURCE_DIR" "$TEMP_ARCHIVE"
+  else
+    printf '%s\0' "$BACKUP_PASSWORD" | hdiutil create "$TEMP_ARCHIVE" \
+      -srcfolder "$SOURCE_DIR" -volname mac-migration -fs "Case-sensitive APFS" \
+      -format UDZO -encryption AES-256 -stdinpass
+  fi
+}
+
 PARENT_DIR="$(dirname "$SOURCE_DIR")"
 ARCHIVE_BASE="$PARENT_DIR/mac-migration-$(date +%Y%m%d-%H%M%S)"
 ARCHIVE_PATH="$ARCHIVE_BASE.dmg"
@@ -50,6 +77,11 @@ trap 'exit 143' TERM
 TEMP_ARCHIVE="$WORK_DIR/backup.dmg"
 
 echo "建立 AES-256 加密 DMG；內容與檔名需解鎖後才能讀取。"
+if [ "$USE_DISKUTIL" = true ]; then
+  echo "使用 diskutil image create。"
+else
+  echo "系統未提供可用的 diskutil image create，使用 hdiutil 相容模式。"
+fi
 echo "密碼隱藏輸入，只透過標準輸入交給 macOS，不寫入命令列或設定檔。"
 # unset 清除可能由父程序匯出的同名變數，避免密碼成為環境變數。
 unset BACKUP_PASSWORD VERIFY_PASSWORD
@@ -59,9 +91,7 @@ if [ -z "$BACKUP_PASSWORD" ]; then
   echo "密碼不可為空；明文備份仍在: $SOURCE_DIR" >&2
   exit 1
 fi
-if ! printf '%s\0' "$BACKUP_PASSWORD" | hdiutil create "$TEMP_ARCHIVE" \
-    -srcfolder "$SOURCE_DIR" -volname mac-migration -fs "Case-sensitive APFS" \
-    -format UDZO -encryption AES-256 -stdinpass; then
+if ! create_encrypted_image; then
   echo "加密失敗，明文備份已保留: $SOURCE_DIR" >&2
   exit 1
 fi
