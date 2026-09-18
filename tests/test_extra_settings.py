@@ -24,7 +24,7 @@ class ExtraSettingsTests(unittest.TestCase):
         return subprocess.run(['/bin/bash', '-c',
                                'set -e; umask 077; source "$1/migration-common.sh"; ' + code,
                                'fixture', str(REPO), str(self.backup)],
-                              env=self.env, text=True, capture_output=True)
+                              env=self.env, text=True, capture_output=True, timeout=30)
 
     def put(self, name, text='original'):
         path = self.home / name
@@ -51,7 +51,7 @@ class ExtraSettingsTests(unittest.TestCase):
         result = self.run_shell('backup_extra_settings "$2"')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(list((self.backup / 'extra-settings').iterdir())), 13)
-        self.assertFalse((self.backup / 'extra-settings/docker-config/ignored-volume').exists())
+        self.assertFalse(list((self.backup / 'extra-settings').rglob('ignored-volume')))
         for name in names:
             (self.home / name).write_text('new-machine')
         for mode in ('no', 'dry'):
